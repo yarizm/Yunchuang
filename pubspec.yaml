@@ -1,0 +1,82 @@
+name: yunchuang
+description: 芸窗 - 本地阅读器，支持 EPUB/PDF/TXT，含笔记、词典、TTS 与 AI 助手
+publish_to: 'none'
+version: 1.0.0+2026091101
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # State management
+  flutter_riverpod: ^2.5.1
+
+  # Routing
+  go_router: ^14.2.0
+
+  # Database
+  # 精确钉死，不用 ^ 范围：生成的 .g.dart 提交进仓库并由 CI 校验，
+  # 而 drift_dev 不同小版本的输出不一样（2.34.6 给 readTable 加了显式类型
+  # 参数，2.34.1 不加）。本地 pubspec.lock 锁在 pub 中国镜像 host 上，CI 走
+  # pub.dev 时整份 lock 作废、全量重新解析，范围约束就会解析出别的版本，
+  # 校验必然失败。约束写死之后 host 是哪个都只能选中同一个生成器。
+  # 升级 drift 时改这两处版本号，同时本地重跑 build_runner 并提交生成结果。
+  drift: 2.34.0
+  sqlite3_flutter_libs: ^0.5.0
+
+  # HTTP
+  dio: ^5.4.3+1
+  # WebDAV 的 PROPFIND 返回 XML，需要显式声明（此前只是 epubx 的传递依赖）
+  xml: ^6.5.0
+
+  # Book parsing
+  epubx: ^4.0.0
+
+  # TTS
+  flutter_tts: ^4.0.2
+  audio_service: ^0.18.19
+  audio_session: ^0.2.4
+
+  # File handling
+  file_picker: ^8.0.3
+  desktop_drop: ^0.6.1
+  path_provider: ^2.1.3
+  path: ^1.9.0
+
+  # UI
+  flutter_markdown_plus: ^1.0.7
+
+  # Sharing
+  share_plus: ^10.0.0
+
+  # Utilities
+  archive: ^3.6.1
+  csv: ^6.0.0
+  uuid: ^4.4.0
+  crypto: ^3.0.6
+  meta: ^1.12.0
+  syncfusion_flutter_pdf: ^33.2.13
+  syncfusion_flutter_pdfviewer: ^33.2.13
+  flutter_html: ^3.0.0-beta.2
+  html: ^0.15.4
+  shared_preferences: ^2.5.5
+  charset_converter: ^2.4.0
+
+  # Keep screen awake while reading
+  wakelock_plus: ^1.2.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  drift_dev: 2.34.1+1
+  build_runner: ^2.4.9
+  mocktail: ^1.0.4
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/

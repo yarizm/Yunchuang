@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Flutter 版本必须钉死，不能用浮动的 channel: stable。
+#
+# 下面的「生成代码是否最新」校验，前提是生成结果只由源码决定。而 drift_dev
+# 不同小版本的输出格式不一样（2.34.6 给 readTable 加了显式类型参数，2.34.1
+# 不加），一旦 CI 拿到比开发机更新的 Dart SDK，pub 就会突破 pubspec.lock
+# 重新解析出更新的 drift_dev，生成结果与仓库里提交的对不上，校验必然失败——
+# 无论提交的是什么，哪怕只改了一个 md 文件。
+#
+# 所以这里锁到与开发机一致的版本。升级 Flutter 时改这里，同时在本地重跑
+# build_runner 并提交生成结果，两边一起走。
+env:
+  FLUTTER_VERSION: 3.44.2
+
+jobs:
+  analyze-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      # Generated Drift code is committed (CI does not run build_runner before
+      # analyze/test). Regenerate and fail if the result differs, so a table or
+      # DAO change that was never regenerated cannot pass CI.
+      - name: Verify generated code is up to date
+        run: |
+          dart run build_runner build --delete-conflicting-outputs
+          git diff --exit-code -- '*.g.dart'
+      - run: flutter analyze
+      - run: flutter test
+      # Gradle 拉 Maven 依赖时偶发解析失败（近六次 CI 挂了两次，都是
+      # `Could not resolve ...` 加 "Gradle threw an error while downloading
+      # artifacts from the network"，代码本身没问题）。Flutter 自带的重试
+      # 只等 100ms 就重来，对网络抖动几乎等于没重试，所以这里补一层退避。
+      #
+      # 只包这一步：APK 构建幂等，重跑走 Gradle 缓存，增量很快；analyze
+      # 与 test 失败都是真失败，给它们加重试只会把问题盖住。
+      #
+      # 不用第三方 retry action：这点逻辑不值得为 CI 引一个外部依赖。
+      - name: Build debug APK
+        run: |
+          attempts=3
+          for attempt in $(seq 1 $attempts); do
+            if flutter build apk --debug; then
+              exit 0
+            fi
+            if [ "$attempt" -lt "$attempts" ]; then
+              wait=$((attempt * 30))
+              echo "::warning::debug APK 构建第 ${attempt} 次失败，${wait}s 后重试"
+              sleep "$wait"
+            fi
+          done
+          echo "::error::debug APK 构建连续 ${attempts} 次失败"
+          exit 1
+      # release 走的是完全不同的一条路：Dart AOT 编译（debug 是 JIT）、
+      # 图标字体 tree-shaking、release 清单合并。这些只在 release 里跑，
+      # debug 全绿也保证不了 release 能出包——而出包正是发版时才做的事，
+      # 坏了只能当场发现。
+      #
+      # 没有 key.properties 时 Gradle 不设 release 签名配置，回退到 debug
+      # 签名照样出包，所以 CI 不需要任何密钥。
+      - name: Build release APK
+        run: |
+          attempts=3
+          for attempt in $(seq 1 $attempts); do
+            if flutter build apk --release; then
+              exit 0
+            fi
+            if [ "$attempt" -lt "$attempts" ]; then
+              wait=$((attempt * 30))
+              echo "::warning::release APK 构建第 ${attempt} 次失败，${wait}s 后重试"
+              sleep "$wait"
+            fi
+          done
+          echo "::error::release APK 构建连续 ${attempts} 次失败"
+          exit 1
+
+  windows-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter config --enable-windows-desktop
+      - run: flutter pub get
+      - run: flutter build windows --release

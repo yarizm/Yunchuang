@@ -1,0 +1,5 @@
+# Copy this file to android/key.properties and keep the real values private.
+storeFile=C:\\absolute\\path\\to\\release-keystore.jks
+storePassword=change-me
+keyAlias=release
+keyPassword=change-me

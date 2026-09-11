@@ -1,0 +1,68 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.buildlog/
+.history
+.svn/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# VS Code related
+.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+/build/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android build artifacts
+/android/app/debug
+/android/app/profile
+/android/app/release
+/android/build/
+/android/.gradle/
+/android/.kotlin/
+/android/local.properties
+/android/key.properties
+
+# Windows generated
+
+# Design docs：AI 辅助开发的过程产物（计划、验收单、设计稿、ADR），不入库
+/docs/
+
+# Flutter tool
+.metadata
+
+# Local release packages
+/dist/
+/performance-results/
+
+# Claude Code
+.superpowers/
+/.claude/
+
+# Runtime artifacts：AI 辅助开发的运行时产物，不入库
+/tmp/
+/outputs/
+/logs/
