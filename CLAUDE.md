@@ -113,6 +113,10 @@ Drift ORM（`drift` + `sqlite3_flutter_libs`），数据库文件 `reading_offli
 
 **删书会让库变大，必须显式压缩**。FTS5 外部内容表删行时不是就地移除，而是往索引里**追加**一条删除标记。实测一本 1500 章、300 万字的书，删掉之后库从 57MB 涨到 90MB 且不会自己缩回去；加了 `chapters_trigram` 之后更严重（trigram 条目数是普通 FTS 的三倍）。`AppDatabase.compact()` 先对四张 FTS 表跑 `optimize` 再 `VACUUM`——**两步缺一不可**：只 VACUUM 只降到 88MB（删除标记是活数据），只 optimize 还是 90MB（腾出的页不还给系统），两步一起才回到 0.34MB。开销 695ms + 22ms，几乎全在 optimize，且跟索引规模走而不是跟删了多少走，所以 `BookService` 用 50 万字的门槛决定要不要跑。见 `test/database/compaction_test.dart`。
 
+## 应用图标
+
+`tool/make_icon.py` 生成全部图标文件：Android 的传统 `ic_launcher.png`、自适应图标的前景 / 背景 PNG 与 `mipmap-anydpi-v26/ic_launcher.xml`、Windows 的 `app_icon.ico`，外加 `tool/icon.png` 这张 1024 主图。改图标改脚本再跑一遍，不要手改 mipmap 里的 PNG。没用 `flutter_launcher_icons`：它要 `image ^4`，和 `epubx` 依赖的 `image 3.x` 冲突。
+
 ## 数据目录
 
 数据库、书籍、封面、词典、背景图都放在 `appDataDirectory()`（`utils/app_data_directory.dart`）返回的目录下，默认是系统文档目录。设了环境变量 `YUNCHUANG_DATA_DIR` 就用它——README 的截图就是这样在一个空目录 + Gutenberg 公版书上截的，没有碰真实书库。不要在各处直接调 `getApplicationDocumentsDirectory()`，新代码走这个函数（或各 Service 的 `appDirectoryProvider` 注入）。

@@ -1,4 +1,4 @@
-# 芸窗 Yunchuang
+# <img src="tool/icon.png" width="40" align="top" alt="" /> 芸窗 Yunchuang
 
 本地阅读器。读 EPUB / PDF / TXT，做笔记，划词查词典、记生词、翻译，听 TTS，问 AI。数据存在本机，除 AI 与翻译外不联网。
 
