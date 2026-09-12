@@ -8,6 +8,7 @@ import '../../database/daos/book_reading_settings_dao.dart';
 import '../../providers/book_reading_settings_provider.dart';
 import '../../providers/database_provider.dart';
 import '../../providers/preferences_provider.dart';
+import '../../utils/app_orientation.dart';
 import '../../theme/reader_theme.dart';
 import '../../utils/font_utils.dart';
 import 'format_reader.dart';
@@ -92,6 +93,7 @@ class _QuickSettingsContentState extends State<_QuickSettingsContent> {
   late double _readingBrightness;
   late bool _brightnessGestureEnabled;
   late bool _lineFocusEnabled;
+  late bool _readerLandscape;
   late int _lineFocusLineCount;
   late double _lineFocusDimAmount;
   late double _pdfCropAmount;
@@ -122,6 +124,7 @@ class _QuickSettingsContentState extends State<_QuickSettingsContent> {
     _brightnessGestureEnabled =
         widget.globalPreferences.brightnessGestureEnabled;
     _lineFocusEnabled = widget.globalPreferences.lineFocusEnabled;
+    _readerLandscape = widget.globalPreferences.readerLandscape;
     _lineFocusLineCount = widget.globalPreferences.lineFocusLineCount;
     _lineFocusDimAmount = widget.globalPreferences.lineFocusDimAmount;
     _pdfCropAmount = widget.prefs.pdfCropAmount;
@@ -598,6 +601,11 @@ class _QuickSettingsContentState extends State<_QuickSettingsContent> {
                       ),
                     ],
                     // 全局设置：不随书变化，与当前书的排版无关，沉到最后。
+                    // 和上面按书的排版隔开一条线：之前「翻页效果」和「主题」
+                    // 挨在一起，看着像同一组。
+                    const SizedBox(height: 24),
+                    const Divider(height: 1),
+                    const SizedBox(height: 20),
                     // Theme
                     Row(
                       children: [
@@ -701,6 +709,22 @@ class _QuickSettingsContentState extends State<_QuickSettingsContent> {
                         ),
                       ],
                     ),
+                    if (supportsReaderLandscape) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Text('横屏阅读（全局）', style: theme.textTheme.titleSmall),
+                          const Spacer(),
+                          Switch(
+                            value: _readerLandscape,
+                            onChanged: (value) {
+                              setState(() => _readerLandscape = value);
+                              widget.notifier.updateReaderLandscape(value);
+                            },
+                          ),
+                        ],
+                      ),
+                    ],
                     const SizedBox(height: 8),
                     Row(
                       children: [
@@ -928,5 +952,4 @@ class _QuickSettingsContentState extends State<_QuickSettingsContent> {
 
   String _paragraphIndentPrefix() =>
       List.filled(_paragraphIndent, '\u3000').join();
-
 }

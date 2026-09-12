@@ -12,6 +12,15 @@ class _FakeNoteDao {
   Future<List<dynamic>> bookmarksForBook(int bookId) async => const [];
 }
 
+/// 这些分页用例按单页语义写。测试窗口默认 800×600 是横屏，分页阅读会
+/// 并排两页（见 PagedReader.spreadFits），先把窗口竖过来。双页有自己的用例。
+void usePortraitViewport(WidgetTester tester) {
+  tester.view.physicalSize = const Size(393, 720);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+}
+
 void main() {
   test('scroll progress does not notify the whole reader controller', () {
     final controller = ReaderController(bookId: 1);
@@ -348,6 +357,7 @@ void main() {
 
   testWidgets('paged reader follows and highlights the active TTS sentence',
       (tester) async {
+    usePortraitViewport(tester);
     final content = List.generate(500, (index) => 'Sentence $index.').join(' ');
     int? activeSentenceIndex;
     late StateSetter rebuild;
@@ -440,6 +450,7 @@ void main() {
 
   testWidgets('paged reader updates page number and text anchor on every turn',
       (tester) async {
+    usePortraitViewport(tester);
     final content = List.filled(1000, '翻页后应立即更新页码和阅读锚点。').join();
     final positions = <double>[];
 
@@ -472,6 +483,7 @@ void main() {
 
   testWidgets('paged reader follows an updated external reading position',
       (tester) async {
+    usePortraitViewport(tester);
     final content = List.filled(1200, '引用跳转应定位到包含命中内容的页面。').join();
     var initialPosition = 0.0;
     late StateSetter rebuild;
@@ -541,6 +553,7 @@ void main() {
 
   testWidgets('paged reader can request the next chapter from the last page',
       (tester) async {
+    usePortraitViewport(tester);
     final content = List.filled(1200, '最后一页继续翻动应进入下一章。').join();
     var advanceRequests = 0;
 
@@ -573,6 +586,7 @@ void main() {
 
   testWidgets('paged reader delays chapter changes until the edge drag ends',
       (tester) async {
+    usePortraitViewport(tester);
     final content = List.filled(
       1200,
       'Chapter boundary changes should wait for the page drag to finish.',
@@ -640,6 +654,58 @@ void main() {
     await tester.pump(const Duration(milliseconds: 220));
 
     expect(retreatRequests, 1);
+  });
+
+  // 横屏阅读：宽大于高时分页模式并排两页，翻一次走两页，最后一页仍然能
+  // 触发下一章。
+  testWidgets('paged reader shows two pages side by side in landscape',
+      (tester) async {
+    tester.view.physicalSize = const Size(900, 500);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final content = List.filled(600, '横屏时左右两页并排，像翻开的书。').join();
+    final pages = <int>[];
+    var advanceRequests = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PagedReader(
+            content: content,
+            onPageChanged: pages.add,
+            onAdvanceBeyondLast: () => advanceRequests++,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(PagedReader.spreadFits(900, 500), isTrue);
+    expect(PagedReader.spreadFits(400, 800), isFalse);
+    // 页码显示成「1-2 / N」，且第一个视图里有两页正文。
+    final indicator = tester
+        .widgetList<Text>(find.byType(Text))
+        .map((text) => text.data ?? '')
+        .firstWhere((text) => RegExp(r'^\d+-\d+ / \d+$').hasMatch(text));
+    expect(indicator, startsWith('1-2 / '));
+    final pageCount = int.parse(indicator.split('/').last.trim());
+    expect(pageCount, greaterThan(2));
+
+    await tester.drag(find.byType(PageView), const Offset(-600, 0));
+    await tester.pumpAndSettle();
+    // 翻一次走两页：回调给的是视图里第一页的页码。
+    expect(pages, [2]);
+
+    final pageView = tester.widget<PageView>(find.byType(PageView));
+    final viewCount =
+        (pageView.childrenDelegate as SliverChildBuilderDelegate).childCount!;
+    expect(viewCount, (pageCount + 1) ~/ 2);
+    pageView.controller!.jumpToPage(viewCount - 1);
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(PageView), const Offset(-600, 0));
+    await tester.pump(const Duration(milliseconds: 220));
+    expect(advanceRequests, 1);
   });
 
   test('switching reading modes preserves the canonical position', () {

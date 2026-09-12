@@ -15,6 +15,7 @@ class ReadingPreferences {
   final String theme;
   final bool keepScreenOn;
   final String preferredOrientation;
+  final bool readerLandscape;
   final double readingBrightness;
   final bool brightnessGestureEnabled;
   final bool lineFocusEnabled;
@@ -45,6 +46,7 @@ class ReadingPreferences {
     this.theme = ReadingDefaults.theme,
     this.keepScreenOn = ReadingDefaults.keepScreenOn,
     this.preferredOrientation = ReadingDefaults.preferredOrientation,
+    this.readerLandscape = ReadingDefaults.readerLandscape,
     this.readingBrightness = ReadingDefaults.readingBrightness,
     this.brightnessGestureEnabled = ReadingDefaults.brightnessGestureEnabled,
     this.lineFocusEnabled = ReadingDefaults.lineFocusEnabled,
@@ -76,6 +78,7 @@ class ReadingPreferences {
     String? theme,
     bool? keepScreenOn,
     String? preferredOrientation,
+    bool? readerLandscape,
     double? readingBrightness,
     bool? brightnessGestureEnabled,
     bool? lineFocusEnabled,
@@ -108,6 +111,7 @@ class ReadingPreferences {
       theme: theme ?? this.theme,
       keepScreenOn: keepScreenOn ?? this.keepScreenOn,
       preferredOrientation: preferredOrientation ?? this.preferredOrientation,
+      readerLandscape: readerLandscape ?? this.readerLandscape,
       readingBrightness: readingBrightness ?? this.readingBrightness,
       brightnessGestureEnabled:
           brightnessGestureEnabled ?? this.brightnessGestureEnabled,
@@ -162,6 +166,7 @@ class PreferencesNotifier extends Notifier<ReadingPreferences> {
   static const _kTheme = 'theme';
   static const _kKeepScreenOn = 'keepScreenOn';
   static const _kPreferredOrientation = 'preferredOrientation';
+  static const _kReaderLandscape = 'readerLandscape';
   static const _kReadingBrightness = 'readingBrightness';
   static const _kBrightnessGestureEnabled = 'brightnessGestureEnabled';
   static const _kLineFocusEnabled = 'lineFocusEnabled';
@@ -197,6 +202,8 @@ class PreferencesNotifier extends Notifier<ReadingPreferences> {
           prefs.getBool(_kKeepScreenOn) ?? ReadingDefaults.keepScreenOn,
       preferredOrientation: prefs.getString(_kPreferredOrientation) ??
           ReadingDefaults.preferredOrientation,
+      readerLandscape:
+          prefs.getBool(_kReaderLandscape) ?? ReadingDefaults.readerLandscape,
       readingBrightness: _readReadingBrightness(prefs),
       brightnessGestureEnabled: prefs.getBool(_kBrightnessGestureEnabled) ??
           ReadingDefaults.brightnessGestureEnabled,
@@ -262,6 +269,11 @@ class PreferencesNotifier extends Notifier<ReadingPreferences> {
   void updateKeepScreenOn(bool value) {
     state = state.copyWith(keepScreenOn: value);
     ref.read(sharedPreferencesProvider).setBool(_kKeepScreenOn, value);
+  }
+
+  void updateReaderLandscape(bool value) {
+    state = state.copyWith(readerLandscape: value);
+    ref.read(sharedPreferencesProvider).setBool(_kReaderLandscape, value);
   }
 
   void updatePreferredOrientation(String orientation) {

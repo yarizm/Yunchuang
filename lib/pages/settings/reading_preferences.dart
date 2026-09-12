@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/preferences_provider.dart';
+import '../../utils/app_orientation.dart';
 import '../../theme/reader_theme.dart';
 import '../../widgets/glass_container.dart';
 import '../../widgets/reader_paper_picker.dart';
@@ -271,6 +272,31 @@ class ReadingPreferencesPage extends ConsumerWidget {
                         notifier.updatePreferredOrientation(s.first),
                   ),
                 ),
+                if (supportsReaderLandscape) ...[
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('阅读时横屏', style: theme.textTheme.titleSmall),
+                            const SizedBox(height: 4),
+                            Text(
+                              '进入阅读器自动转成横屏，退出后恢复上面的设置；'
+                              '分页模式下横屏会左右两页并排',
+                              style: theme.textTheme.bodySmall,
+                            ),
+                          ],
+                        ),
+                      ),
+                      Switch(
+                        value: prefs.readerLandscape,
+                        onChanged: notifier.updateReaderLandscape,
+                      ),
+                    ],
+                  ),
+                ],
               ],
             ),
           ),

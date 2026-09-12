@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -8,6 +7,7 @@ import 'pages/notes/notes_page.dart';
 import 'pages/stats/reading_stats_page.dart';
 import 'pages/settings/settings_page.dart';
 import 'theme/app_theme.dart';
+import 'utils/app_orientation.dart';
 import 'providers/preferences_provider.dart';
 import 'providers/webdav_provider.dart';
 import 'widgets/app_background.dart';
@@ -112,28 +112,7 @@ class _MainShellState extends ConsumerState<MainShell> {
   }
 
   void _applyOrientation(String orientation) {
-    final devices = <DeviceOrientation>[
-      DeviceOrientation.portraitUp,
-      DeviceOrientation.portraitDown,
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
-    ];
-    switch (orientation) {
-      case 'portrait':
-        SystemChrome.setPreferredOrientations([
-          DeviceOrientation.portraitUp,
-          DeviceOrientation.portraitDown,
-        ]);
-        break;
-      case 'landscape':
-        SystemChrome.setPreferredOrientations([
-          DeviceOrientation.landscapeLeft,
-          DeviceOrientation.landscapeRight,
-        ]);
-        break;
-      default: // 'auto'
-        SystemChrome.setPreferredOrientations(devices);
-    }
+    applyAppOrientation(orientation);
   }
 
   @override

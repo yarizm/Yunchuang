@@ -15,6 +15,8 @@ import '../../providers/database_provider.dart';
 import '../../providers/note_provider.dart';
 import '../../providers/preferences_provider.dart';
 import '../../providers/translation_provider.dart';
+import '../../models/reading_defaults.dart';
+import '../../utils/app_orientation.dart';
 import '../../utils/sentence_splitter.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/app_background.dart';
@@ -103,6 +105,9 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
   late final TtsPlaybackCheckpointStore _ttsCheckpointStore;
   late final TTSService _ttsService;
 
+  /// 全局的方向设置，退出阅读器时交还用。
+  String _appOrientation = ReadingDefaults.preferredOrientation;
+
   ReaderController get _controller => _readerController;
 
   ReaderLocator? get _initialLocator {
@@ -134,6 +139,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
       );
     WidgetsBinding.instance.addObserver(this);
     _controller.startReadingTimer();
+    _applyReaderOrientation(ref.read(preferencesProvider));
     if (ref.read(preferencesProvider).keepScreenOn) {
       WakelockPlus.enable();
     }
@@ -503,7 +509,22 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
     _ttsService.onSentenceChanged = null;
     _ttsService.onContentCompleted = null;
     unawaited(_ttsService.stop());
+    // 退出阅读器就交还给全局的方向设置。dispose 里不能再碰 ref，所以用
+    // 上次 apply 时记下的值。
+    if (supportsReaderLandscape) applyAppOrientation(_appOrientation);
     super.dispose();
+  }
+
+  /// 「阅读时横屏」开着就锁横屏，关了就回到全局的方向设置。快捷设置里
+  /// 的开关会在阅读中途切换，所以 build 里还 listen 着它。
+  void _applyReaderOrientation(ReadingPreferences prefs) {
+    if (!supportsReaderLandscape) return;
+    _appOrientation = prefs.preferredOrientation;
+    if (prefs.readerLandscape) {
+      applyReaderLandscape();
+    } else {
+      applyAppOrientation(prefs.preferredOrientation);
+    }
   }
 
   @override
@@ -1663,6 +1684,10 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
 
   @override
   Widget build(BuildContext context) {
+    ref.listen(
+      preferencesProvider.select((p) => p.readerLandscape),
+      (_, __) => _applyReaderOrientation(ref.read(preferencesProvider)),
+    );
     // 正文纸张独立于全局主题：想黑底白字读书，不必把书架和设置页一起变暗。
     // 覆盖整棵子树而不是只染正文——工具栏、目录面板、快捷设置都从
     // colorScheme 取色，一起换才不会出现「黑底正文弹出白色目录」。

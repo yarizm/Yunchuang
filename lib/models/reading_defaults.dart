@@ -39,6 +39,9 @@ class ReadingDefaults {
   static const String theme = 'light';
   static const bool keepScreenOn = true;
   static const String preferredOrientation = 'auto';
+
+  /// 阅读时锁横屏（只在手机上生效；桌面没有方向）。
+  static const bool readerLandscape = false;
   static const String pageTurnEffect = 'curl';
 
   /// -1 表示跟随系统亮度，不接管窗口亮度。
