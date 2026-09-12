@@ -32,7 +32,7 @@ void main() {
     expect(find.text('还没有书'), findsOneWidget);
     expect(find.text('书架'), findsOneWidget);
 
-    // 背景挂在 MaterialApp.builder 里才拿得到主题。挂错位置（比如包在
+    // 背景挂在 MaterialApp 里面（MainShell）才拿得到主题。挂错位置（比如包在
     // MaterialApp 外面）时 Theme.of 只能给出兜底主题，底色就不是这个值——
     // 这条断言钉住的是接线位置，不是 AppBackground 自己的逻辑。
     expect(

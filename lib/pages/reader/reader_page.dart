@@ -17,8 +17,8 @@ import '../../providers/preferences_provider.dart';
 import '../../providers/translation_provider.dart';
 import '../../utils/sentence_splitter.dart';
 import '../../widgets/empty_state.dart';
+import '../../widgets/app_background.dart';
 import '../../widgets/glass_container.dart';
-import '../../providers/ui_provider.dart';
 import '../../services/tts_media_session.dart';
 import '../../services/tts_playback_checkpoint_store.dart';
 import '../../services/tts_service.dart';
@@ -102,7 +102,6 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
   late final TtsMediaSession? _ttsMediaSession;
   late final TtsPlaybackCheckpointStore _ttsCheckpointStore;
   late final TTSService _ttsService;
-  late final StateController<bool> _backgroundAnimationController;
 
   ReaderController get _controller => _readerController;
 
@@ -133,13 +132,6 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
         onPreviousChapter: _playPreviousTtsChapter,
         onNextChapter: _playNextTtsChapter,
       );
-    _backgroundAnimationController =
-        ref.read(backgroundAnimationEnabledProvider.notifier);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        ref.read(backgroundAnimationEnabledProvider.notifier).state = false;
-      }
-    });
     WidgetsBinding.instance.addObserver(this);
     _controller.startReadingTimer();
     if (ref.read(preferencesProvider).keepScreenOn) {
@@ -511,9 +503,6 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
     _ttsService.onSentenceChanged = null;
     _ttsService.onContentCompleted = null;
     unawaited(_ttsService.stop());
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _backgroundAnimationController.state = true;
-    });
     super.dispose();
   }
 
@@ -1674,6 +1663,28 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
 
   @override
   Widget build(BuildContext context) {
+    // 正文纸张独立于全局主题：想黑底白字读书，不必把书架和设置页一起变暗。
+    // 覆盖整棵子树而不是只染正文——工具栏、目录面板、快捷设置都从
+    // colorScheme 取色，一起换才不会出现「黑底正文弹出白色目录」。
+    final paperTheme = readerThemeFor(
+      Theme.of(context),
+      ref.watch(preferencesProvider.select((p) => p.readerPaper)),
+    );
+
+    // 背景画在纸张主题里，底色就是纸张色；装饰层（插画 / 自选图）和别的页面
+    // 一样按全局浓度叠上去。Scaffold 本身透明（AppTheme 统一给的）。推入本页
+    // 的 GlassPageRoute 不再画它那层背景（paintsOwnBackground），所以加载中、
+    // 出错的那几屏也得在这层里面，不然就是黑屏上一个转圈。
+    return Theme(
+      data: paperTheme,
+      child: PreferredAppBackground(
+        animationEnabled: false,
+        child: _buildContent(context),
+      ),
+    );
+  }
+
+  Widget _buildContent(BuildContext context) {
     if (_loading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
@@ -1764,25 +1775,14 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
       translationSettingsProvider.select((settings) => settings.enabled),
     );
 
-    // 正文纸张独立于全局主题：想黑底白字读书，不必把书架和设置页一起变暗。
-    // 覆盖整棵子树而不是只染正文——工具栏、目录面板、快捷设置都从
-    // colorScheme 取色，一起换才不会出现「黑底正文弹出白色目录」。
-    final paperTheme = readerThemeFor(
-      Theme.of(context),
-      ref.watch(preferencesProvider.select((p) => p.readerPaper)),
-    );
-
-    return Theme(
-      data: paperTheme,
-      child: PopScope<void>(
-        canPop: _allowPop,
-        onPopInvokedWithResult: (didPop, result) {
-          if (!didPop) {
-            unawaited(_exitReader());
-          }
-        },
-        child: Scaffold(
-          backgroundColor: paperTheme.colorScheme.surface,
+    return PopScope<void>(
+      canPop: _allowPop,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) {
+          unawaited(_exitReader());
+        }
+      },
+      child: Scaffold(
         body: ImmersiveReaderShell(
           controller: _controller,
           readerTapExclusionKeys: [_nextChapterButtonKey],
@@ -1869,7 +1869,6 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
                       onTap: () => _showTtsPanel(_readableText(content)),
                     )
                   : null,
-          ),
         ),
       ),
     );

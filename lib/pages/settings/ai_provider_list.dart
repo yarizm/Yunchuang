@@ -25,7 +25,6 @@ class _AiProviderListPageState extends ConsumerState<AiProviderListPage> {
     final providersAsync = ref.watch(allAiProvidersProvider);
 
     return Scaffold(
-      backgroundColor: stableSurfaceColor(context),
       appBar: AppBar(
         title: const Text('AI Provider'),
         leading: Padding(

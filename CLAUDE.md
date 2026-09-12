@@ -64,7 +64,7 @@ Database (SQLite via Drift ORM + FTS5 全文搜索)
 
 GoRouter + `StatefulShellRoute.indexedStack` 管理四个底部 Tab：Shelf(`/`)、Notes(`/notes`)、Stats(`/stats`)、Settings(`/settings`)。
 
-子页面（阅读器、搜索、AI 对话、设置详情页）不走 GoRouter 路由表，而是通过 `Navigator.of(context, rootNavigator: true).push(GlassPageRoute(...))` 命令式推入。`GlassPageRoute` 是自定义 `PageRoute`，`opaque: false` 以透出背景动画。
+子页面（阅读器、搜索、AI 对话、设置详情页）不走 GoRouter 路由表，而是通过 `Navigator.of(context, rootNavigator: true).push(GlassPageRoute(...))` 命令式推入。`GlassPageRoute` 是自定义的淡入淡出 `PageRoute`，给页面铺一层 `PreferredAppBackground`，所以是 `opaque: true`——动画结束后下面那页不再绘制，它的流动渐变也随 TickerMode 一起停。页面自己画背景的（阅读器，要画在纸张主题里）传 `paintsOwnBackground: true`。
 
 ## 状态管理
 
@@ -165,9 +165,13 @@ UI 在 `widgets/ai_chat_panel.dart`（阅读器内嵌）和 `pages/ai/ai_chat_pa
 
 `lib/theme/app_theme.dart` 定义 Light / Sepia / Dark 三套 Material 3 主题，`app.dart` 的 `_resolveTheme` 支持 `system` 跟随系统亮度（sepia 不参与跟随）。全局使用毛玻璃卡片（`GlassContainer`，`BackdropFilter` + `ClipRRect`）。
 
-**全局背景**（`widgets/app_background.dart` 的 `AppBackground`）**必须挂在 `MaterialApp.builder` 里，不能包在 `MaterialApp` 外面**。包在外面就取不到 `Theme.of(context)`，颜色只能写死——这正是之前的样子：深棕底 `#2C2118` + 粉蓝渐变 + 水彩插画常驻，三套主题下一模一样，日间主题于是成了「暖白顶栏压在深棕插画上」，书架网格区更是整片露出插画。现在底色一律取 `colorScheme.surface`，装饰层只是叠加。
+**全局背景**（`widgets/app_background.dart` 的 `AppBackground`）**必须挂在 `MaterialApp` 里面，不能包在外面**。包在外面就取不到 `Theme.of(context)`，颜色只能写死——这正是之前的样子：深棕底 `#2C2118` + 粉蓝渐变 + 水彩插画常驻，三套主题下一模一样，日间主题于是成了「暖白顶栏压在深棕插画上」，书架网格区更是整片露出插画。现在底色一律取 `colorScheme.surface`，装饰层只是叠加。
 
-四种样式（`models/reading_background.dart` 的 `AppBackgroundStyle`）：`solid` / `gradient`（由主题强调色推出）/ `illustration`（内置 `assets/home_bg.png`）/ `custom`（用户自选图）。浓度由 `backgroundIntensity` 控制，`0` 等价于纯色且完全不建装饰层。`backgroundAnimationEnabledProvider` 只管渐变的流动动画，阅读时会被关掉。
+背景是**每个页面各画一层**（`PreferredAppBackground` 按偏好配好）：`MainShell` 一层给四个 Tab，每个 `GlassPageRoute` 一层给推入的页面，阅读器在纸张 `Theme` 里再画一层（底色就是纸张色）。`AppTheme` 把 `scaffoldBackgroundColor` 设成透明，**页面的 `Scaffold` 不要再传 `backgroundColor`**——之前 22 个页面各自铺了一层 96% 不透明的 `stableSurfaceColor`，加上 `GlassPageRoute` 再铺一层，结果就是「背景只有书架有」。`stableSurfaceColor` 留给卡片、顶栏这些需要高对比的局部面。分页阅读的 `_PageCurlSurface` 同理不铺底色。
+
+图片层的不透明度是 `AppBackground` 持有的一个 `AnimationController`，改浓度是改它的 value。不要换成每次 build 新建 `AlwaysStoppedAnimation`：`RenderImage` 换 opacity 对象时不会 `markNeedsPaint`，这层又在自己的 `RepaintBoundary` 里，滑块拖了背景一动不动（v1.0.0 就是这个 bug）。渐变的位置按进程挂钟算，不读控制器的 value，这样多个实例在页面淡入淡出时位置一致。
+
+四种样式（`models/reading_background.dart` 的 `AppBackgroundStyle`）：`solid` / `gradient`（由主题强调色推出）/ `illustration`（内置 `assets/home_bg.png`）/ `custom`（用户自选图）。浓度由 `backgroundIntensity` 控制，`0` 等价于纯色且完全不建装饰层。阅读器那层传 `animationEnabled: false`；被推入页面盖住的页面由 Overlay 关掉 TickerMode，动画自然停。
 
 自定义背景图由 `services/background_image_service.dart` 管理：长边缩到 2160px，落在应用目录的 `backgrounds/` 下。**偏好里只存文件名，不存绝对路径**——文档目录的绝对路径在重装、换设备、恢复备份后都会变。目录随备份一起导出（`backupFormatVersion` 因此升到 4），和 `preferences.json` 里的文件名重新对上。
 
@@ -177,7 +181,7 @@ UI 在 `widgets/ai_chat_panel.dart`（阅读器内嵌）和 `pages/ai/ai_chat_pa
 
 ## 测试
 
-105 个测试文件，覆盖 database / models / pages / parsers / providers / services / widgets。提交前应确保 `flutter analyze` 无告警、`flutter test` 全绿。
+106 个测试文件，覆盖 database / models / pages / parsers / providers / services / widgets。提交前应确保 `flutter analyze` 无告警、`flutter test` 全绿。
 
 性能相关测试（`reader_performance_test.dart`、`home_shelf_performance_test.dart`）约束重建次数，修改阅读器或书架渲染逻辑时容易触发失败，需认真对待而非直接调整阈值。另见 `PERFORMANCE.md`。
 

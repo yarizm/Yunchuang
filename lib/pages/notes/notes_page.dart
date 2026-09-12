@@ -72,7 +72,6 @@ class _NotesPageState extends ConsumerState<NotesPage> {
     final theme = Theme.of(context);
 
     return Scaffold(
-      backgroundColor: stableSurfaceColor(context),
       body: notesAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(

@@ -30,7 +30,6 @@ class _ReadingStatsPageState extends ConsumerState<ReadingStatsPage> {
     final async = ref.watch(readingStatsProvider);
     final theme = Theme.of(context);
     return Scaffold(
-      backgroundColor: stableSurfaceColor(context),
       appBar: AppBar(title: const Text('统计')),
       body: async.when(
         loading: () => const Center(child: CircularProgressIndicator()),

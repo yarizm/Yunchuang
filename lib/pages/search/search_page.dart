@@ -70,7 +70,6 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: stableSurfaceColor(context),
       appBar: AppBar(
         title: GlassContainer.stable(
           padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -156,7 +155,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           onTap: () => Navigator.push(
             context,
             GlassPageRoute(
-              isOpaque: true,
+              paintsOwnBackground: true,
               builder: (_) => ReaderPage(bookId: r.id),
             ),
           ),
@@ -205,7 +204,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     Navigator.push(
       context,
       GlassPageRoute(
-        isOpaque: true,
+        paintsOwnBackground: true,
         builder: (_) => ReaderPage(
           bookId: locator.bookId,
           initialLocator: locator,

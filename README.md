@@ -133,7 +133,7 @@ Android 签名：复制 `android/key.properties.example` 为 `android/key.proper
 | 状态管理 | Riverpod 2.x |
 | 路由 | GoRouter |
 | 数据库 | Drift + SQLite + FTS5 |
-| 测试 | flutter_test + mocktail，105 个测试文件 |
+| 测试 | flutter_test + mocktail，106 个测试文件 |
 
 ```
 lib/

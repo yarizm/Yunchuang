@@ -912,27 +912,27 @@ class _PageCurlSurface extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final active = progress > 0.001;
 
-    return ColoredBox(
-      color: colorScheme.surface,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          RepaintBoundary(child: child),
-          if (active)
-            IgnorePointer(
-              child: CustomPaint(
-                key: const ValueKey('page_curl_overlay'),
-                painter: _PageCurlPainter(
-                  progress: progress,
-                  direction: direction,
-                  surface: colorScheme.surface,
-                  shadow: colorScheme.shadow,
-                  highlight: colorScheme.onSurface,
-                ),
+    // 页面本身不铺底色：纸张色和背景装饰由阅读器外层的 AppBackground 画，
+    // 这里再铺一层不透明的 surface 就把它们全盖掉了。相邻两页在 PageView
+    // 里是并排滑动、不重叠的，透明也不会串页。
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        RepaintBoundary(child: child),
+        if (active)
+          IgnorePointer(
+            child: CustomPaint(
+              key: const ValueKey('page_curl_overlay'),
+              painter: _PageCurlPainter(
+                progress: progress,
+                direction: direction,
+                surface: colorScheme.surface,
+                shadow: colorScheme.shadow,
+                highlight: colorScheme.onSurface,
               ),
             ),
-        ],
-      ),
+          ),
+      ],
     );
   }
 }

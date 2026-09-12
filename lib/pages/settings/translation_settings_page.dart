@@ -24,7 +24,6 @@ class TranslationSettingsPage extends ConsumerWidget {
     final notifier = ref.read(translationSettingsProvider.notifier);
 
     return Scaffold(
-      backgroundColor: stableSurfaceColor(context),
       appBar: AppBar(title: const Text('在线翻译')),
       body: ListView(
         padding: const EdgeInsets.all(16),

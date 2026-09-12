@@ -134,7 +134,6 @@ class _DataManagementPageState extends ConsumerState<DataManagementPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: stableSurfaceColor(context),
       appBar: AppBar(
         title: const Text('数据管理'),
         leading: Padding(

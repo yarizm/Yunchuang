@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yunchuang/models/reading_background.dart';
 import 'package:yunchuang/theme/app_theme.dart';
@@ -108,6 +109,35 @@ void main() {
       expect(
         find.ancestor(of: find.byType(Image), matching: find.byType(Opacity)),
         findsNothing,
+      );
+    });
+
+    // 设置页拖浓度滑块，背景曾经一动不动：每次 build 都塞一个新的
+    // AlwaysStoppedAnimation 进去，RenderImage 换 opacity 对象时只换监听、不会
+    // markNeedsPaint，而这层又在自己的 RepaintBoundary 里，没人带它重画。
+    // 现在必须是同一个对象改值——值变了才会通知到 RenderImage 去重画。
+    testWidgets('改浓度是改同一个 opacity 对象的值，不是换对象', (tester) async {
+      await pump(
+        tester,
+        theme: AppTheme.lightTheme,
+        style: AppBackgroundStyle.illustration,
+        intensity: 0.2,
+      );
+      final before = tester.widget<Image>(find.byType(Image)).opacity;
+
+      await pump(
+        tester,
+        theme: AppTheme.lightTheme,
+        style: AppBackgroundStyle.illustration,
+        intensity: 0.8,
+      );
+      final after = tester.widget<Image>(find.byType(Image)).opacity;
+
+      expect(identical(before, after), isTrue);
+      expect(after?.value, 0.8);
+      expect(
+        tester.renderObject<RenderImage>(find.byType(RawImage)).opacity?.value,
+        0.8,
       );
     });
   });

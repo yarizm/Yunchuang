@@ -23,9 +23,11 @@ void main() {
       ),
     );
 
+    // 页面本身不铺底：全局背景由 GlassPageRoute 那层画，Scaffold 保持主题给的
+    // 透明。搜索框那块仍是稳定的高对比面，不透背景。
     final scaffold = tester.widget<Scaffold>(find.byType(Scaffold));
-    final context = tester.element(find.byType(SearchPage));
-    expect(scaffold.backgroundColor, stableSurfaceColor(context));
+    expect(scaffold.backgroundColor, isNull);
+    expect(AppTheme.lightTheme.scaffoldBackgroundColor, Colors.transparent);
     expect(
       tester.widget<GlassContainer>(find.byType(GlassContainer)),
       isA<GlassContainer>()

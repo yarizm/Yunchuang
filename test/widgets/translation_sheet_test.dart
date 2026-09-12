@@ -5,8 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yunchuang/database/app_database.dart';
 import 'package:yunchuang/providers/ai/ai_provider.dart';
 import 'package:yunchuang/providers/database_provider.dart';
+import 'package:yunchuang/providers/preferences_provider.dart';
 import 'package:yunchuang/services/translation_service.dart';
 import 'package:yunchuang/widgets/translation_sheet.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   testWidgets('shows a generated translation and provider attribution',
@@ -52,12 +54,18 @@ void main() {
       () async => ++loads == 1 ? null : provider,
     );
 
-    // 「去配置」推的是 Provider 列表页，它要读库。
+    // 「去配置」推的是 Provider 列表页，它要读库；GlassPageRoute 给它铺的
+    // 背景要读偏好。
     final database = AppDatabase.connect(NativeDatabase.memory());
     addTearDown(database.close);
+    SharedPreferences.setMockInitialValues({});
+    final preferences = await SharedPreferences.getInstance();
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [databaseProvider.overrideWithValue(database)],
+        overrides: [
+          databaseProvider.overrideWithValue(database),
+          sharedPreferencesProvider.overrideWithValue(preferences),
+        ],
         child: MaterialApp(
           home: Scaffold(
             body: Builder(

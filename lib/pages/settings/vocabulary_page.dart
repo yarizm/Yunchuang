@@ -10,7 +10,6 @@ import '../../models/reader_locator.dart';
 import '../../services/vocabulary_service.dart';
 import '../../theme/glass_page_route.dart';
 import '../../widgets/empty_state.dart';
-import '../../widgets/glass_container.dart';
 import '../reader/reader_page.dart';
 
 class VocabularyPage extends ConsumerStatefulWidget {
@@ -32,7 +31,6 @@ class _VocabularyPageState extends ConsumerState<VocabularyPage> {
     final entries = allEntries.where(_matchesQuery).toList(growable: false);
 
     return Scaffold(
-      backgroundColor: stableSurfaceColor(context),
       appBar: AppBar(
         title: const Text('生词本'),
         actions: [
@@ -161,6 +159,7 @@ class _VocabularyPageState extends ConsumerState<VocabularyPage> {
           ? null
           : () => Navigator.of(context).push(
                 GlassPageRoute(
+                  paintsOwnBackground: true,
                   builder: (_) => ReaderPage(
                     bookId: entry.bookId,
                     initialLocator: ReaderLocator(

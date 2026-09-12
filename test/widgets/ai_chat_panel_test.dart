@@ -63,10 +63,14 @@ void main() {
       conversationCreator: (_, __) async => ++conversationsCreated,
     );
 
+    // 「去配置」推的页面由 GlassPageRoute 铺背景，背景要读偏好。
+    SharedPreferences.setMockInitialValues({});
+    final preferences = await SharedPreferences.getInstance();
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           databaseProvider.overrideWithValue(database),
+          sharedPreferencesProvider.overrideWithValue(preferences),
           aiServiceProvider.overrideWithValue(service),
           characterPersonaCheckpointStoreProvider.overrideWithValue(
             _NoopCheckpointStore(),

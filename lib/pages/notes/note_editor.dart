@@ -248,7 +248,6 @@ class _NoteEditorState extends ConsumerState<NoteEditor> {
   Widget build(BuildContext context) {
     if (_loading) {
       return Scaffold(
-        backgroundColor: stableSurfaceColor(context),
         appBar: AppBar(title: const Text('编辑笔记')),
         body: const Center(child: CircularProgressIndicator()),
       );
@@ -257,7 +256,6 @@ class _NoteEditorState extends ConsumerState<NoteEditor> {
     final loadError = _loadError;
     if (loadError != null) {
       return Scaffold(
-        backgroundColor: stableSurfaceColor(context),
         appBar: AppBar(title: const Text('编辑笔记')),
         body: EmptyState(
           icon: Icons.error_outline,
@@ -277,7 +275,6 @@ class _NoteEditorState extends ConsumerState<NoteEditor> {
       // 列表里点进来之前笔记已经被别处删掉了（比如阅读器里删了高亮）。
       // 给一个空编辑框只会让「保存」按钮变成什么都不做的死按钮。
       return Scaffold(
-        backgroundColor: stableSurfaceColor(context),
         appBar: AppBar(title: const Text('编辑笔记')),
         body: EmptyState(
           icon: Icons.note_alt_outlined,
@@ -299,7 +296,6 @@ class _NoteEditorState extends ConsumerState<NoteEditor> {
         _confirmDiscard();
       },
       child: Scaffold(
-        backgroundColor: stableSurfaceColor(context),
         appBar: AppBar(
           title: const Text('编辑笔记'),
           actions: [

@@ -43,7 +43,6 @@ class HomePage extends ConsumerWidget {
     final theme = Theme.of(context);
 
     return Scaffold(
-      backgroundColor: Colors.transparent,
       body: SharedImportWatcher(
         // 从别的应用分享 / 用「打开方式」打开进来的书，与拖拽走同一条导入
         // 流程；原生侧已经落盘并按扩展名筛过，这里不必再解析路径。
@@ -609,7 +608,7 @@ class HomePage extends ConsumerWidget {
   void _openBook(BuildContext context, Book book) {
     Navigator.of(context, rootNavigator: true).push(
       GlassPageRoute(
-        isOpaque: true,
+        paintsOwnBackground: true,
         builder: (_) => ReaderPage(bookId: book.id),
       ),
     );

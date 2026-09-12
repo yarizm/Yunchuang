@@ -10,7 +10,6 @@ import 'package:share_plus/share_plus.dart';
 import '../../database/app_database.dart';
 import '../../providers/ai/ai_http.dart';
 import '../../providers/database_provider.dart';
-import '../../widgets/glass_container.dart';
 
 enum _AssetAction { export, delete }
 
@@ -34,7 +33,6 @@ class _AiAssetsPageState extends ConsumerState<AiAssetsPage> {
     return DefaultTabController(
       length: 2,
       child: Scaffold(
-        backgroundColor: stableSurfaceColor(context),
         appBar: AppBar(
           title: const Text('AI 扩展'),
           bottom: const TabBar(

@@ -17,7 +17,9 @@ void main() {
 
     expect(theme.colorScheme.surface, paper.background);
     expect(theme.colorScheme.onSurface, paper.foreground);
-    expect(theme.scaffoldBackgroundColor, paper.background);
+    // 纸张色由阅读器里的 AppBackground 画，Scaffold 保持透明，否则背景装饰
+    // 在阅读页就看不见了。
+    expect(theme.scaffoldBackgroundColor, Colors.transparent);
   });
 
   // AppTheme 是用 `.apply(bodyColor: ...)` 把字色写进 textTheme 的，只改

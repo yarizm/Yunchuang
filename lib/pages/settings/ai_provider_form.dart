@@ -95,7 +95,6 @@ class _AiProviderFormPageState extends ConsumerState<AiProviderFormPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: stableSurfaceColor(context),
       appBar: AppBar(
         title: Text(widget.provider != null ? '编辑 Provider' : '添加 Provider'),
         actions: [

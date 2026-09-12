@@ -105,7 +105,6 @@ class _ImportNotesPageState extends ConsumerState<ImportNotesPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: stableSurfaceColor(context),
       appBar: AppBar(
         title: const Text('导入笔记'),
         leading: Padding(

@@ -7,7 +7,6 @@ import '../../providers/database_provider.dart';
 import '../../services/dictionary_service.dart';
 import '../../services/stardict_parser.dart';
 import '../../widgets/empty_state.dart';
-import '../../widgets/glass_container.dart';
 
 class DictionaryPage extends ConsumerStatefulWidget {
   const DictionaryPage({super.key});
@@ -27,7 +26,6 @@ class _DictionaryPageState extends ConsumerState<DictionaryPage> {
     return PopScope(
       canPop: !_importing,
       child: Scaffold(
-        backgroundColor: stableSurfaceColor(context),
         appBar: AppBar(
           title: const Text('离线词典'),
           actions: [

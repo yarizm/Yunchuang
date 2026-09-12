@@ -26,9 +26,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    // 页面本身不铺底：全局背景由 MainShell / GlassPageRoute 那层画，Scaffold
+    // 保持主题给的透明，背景才能在每一页都看得见。卡片仍是稳定的高对比面。
     final scaffold = tester.widget<Scaffold>(find.byType(Scaffold).first);
-    final context = tester.element(find.byType(NotesPage));
-    expect(scaffold.backgroundColor, stableSurfaceColor(context));
+    expect(scaffold.backgroundColor, equals(null));
+    expect(AppTheme.lightTheme.scaffoldBackgroundColor, Colors.transparent);
     expect(
       tester.widgetList<GlassContainer>(find.byType(GlassContainer)),
       everyElement(

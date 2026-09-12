@@ -12,7 +12,6 @@ class TtsSettingsPage extends ConsumerWidget {
     final tts = ref.watch(ttsServiceProvider);
 
     return Scaffold(
-      backgroundColor: stableSurfaceColor(context),
       appBar: AppBar(
         title: const Text('TTS 设置'),
         leading: Padding(

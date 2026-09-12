@@ -10,7 +10,6 @@ import 'pages/settings/settings_page.dart';
 import 'theme/app_theme.dart';
 import 'providers/preferences_provider.dart';
 import 'providers/webdav_provider.dart';
-import 'providers/ui_provider.dart';
 import 'widgets/app_background.dart';
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
@@ -69,28 +68,14 @@ class ReadingOfflineApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final router = ref.watch(routerProvider);
     final themeStr = ref.watch(preferencesProvider.select((p) => p.theme));
-    final backgroundStyle = ref.watch(effectiveBackgroundStyleProvider);
-    final backgroundIntensity = ref.watch(
-      preferencesProvider.select((p) => p.backgroundIntensity),
-    );
-    final customBackgroundPath = ref.watch(customBackgroundPathProvider);
-    final backgroundAnimationEnabled =
-        ref.watch(backgroundAnimationEnabledProvider);
 
+    // 全局背景不在这里：它是每个页面各画一层的（MainShell 一层、每个
+    // GlassPageRoute 一层），见 AppBackground 的说明。
     return MaterialApp.router(
       title: '芸窗',
       theme: AppTheme.resolve(themeStr, Brightness.light),
       darkTheme: AppTheme.resolve(themeStr, Brightness.dark),
       routerConfig: router,
-      // 背景放在 builder 里而不是包在 MaterialApp 外面：只有在里面才拿得到
-      // Theme.of(context)，底色才能跟着主题走。
-      builder: (context, child) => AppBackground(
-        style: backgroundStyle,
-        customImagePath: customBackgroundPath,
-        intensity: backgroundIntensity,
-        animationEnabled: backgroundAnimationEnabled,
-        child: child ?? const SizedBox.shrink(),
-      ),
     );
   }
 }
@@ -157,22 +142,27 @@ class _MainShellState extends ConsumerState<MainShell> {
     ref.listen(preferencesProvider.select((p) => p.preferredOrientation),
         (_, next) => _applyOrientation(next));
 
-    return Scaffold(
-      body: widget.navigationShell,
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: widget.navigationShell.currentIndex,
-        onDestinationSelected: (i) {
-          widget.navigationShell.goBranch(
-            i,
-            initialLocation: i == widget.navigationShell.currentIndex,
-          );
-        },
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.book), label: '书架'),
-          NavigationDestination(icon: Icon(Icons.note), label: '笔记'),
-          NavigationDestination(icon: Icon(Icons.bar_chart), label: '统计'),
-          NavigationDestination(icon: Icon(Icons.settings), label: '设置'),
-        ],
+    // 背景放在 MaterialApp 里面而不是包在外面：只有在里面才拿得到
+    // Theme.of(context)，底色才能跟着主题走。四个 Tab 的 Scaffold 都是透明的，
+    // 这一层就是它们的底。
+    return PreferredAppBackground(
+      child: Scaffold(
+        body: widget.navigationShell,
+        bottomNavigationBar: NavigationBar(
+          selectedIndex: widget.navigationShell.currentIndex,
+          onDestinationSelected: (i) {
+            widget.navigationShell.goBranch(
+              i,
+              initialLocation: i == widget.navigationShell.currentIndex,
+            );
+          },
+          destinations: const [
+            NavigationDestination(icon: Icon(Icons.book), label: '书架'),
+            NavigationDestination(icon: Icon(Icons.note), label: '笔记'),
+            NavigationDestination(icon: Icon(Icons.bar_chart), label: '统计'),
+            NavigationDestination(icon: Icon(Icons.settings), label: '设置'),
+          ],
+        ),
       ),
     );
   }

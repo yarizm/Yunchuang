@@ -33,9 +33,13 @@ void main() {
 
   testWidgets('opens AI asset management directly from settings',
       (tester) async {
+    // 推入的页面由 GlassPageRoute 铺背景，背景要读偏好。
+    SharedPreferences.setMockInitialValues({});
+    final preferences = await SharedPreferences.getInstance();
     await tester.pumpWidget(
-      const ProviderScope(
-        child: MaterialApp(home: SettingsPage()),
+      ProviderScope(
+        overrides: [sharedPreferencesProvider.overrideWithValue(preferences)],
+        child: const MaterialApp(home: SettingsPage()),
       ),
     );
 

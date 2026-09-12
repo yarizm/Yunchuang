@@ -6,9 +6,6 @@ import '../models/reading_background.dart';
 import '../services/background_image_service.dart';
 import 'preferences_provider.dart';
 
-/// Expensive decorative animation should be disabled while reading.
-final backgroundAnimationEnabledProvider = StateProvider<bool>((ref) => true);
-
 /// 应用文档目录。在 `main()` 里覆盖——`getApplicationDocumentsDirectory()` 是
 /// 异步的，而背景图路径要在同步的 build 里解析。
 final appDocumentsDirectoryProvider = Provider<Directory>((ref) {

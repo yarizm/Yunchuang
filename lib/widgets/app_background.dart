@@ -2,17 +2,27 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/reading_background.dart';
+import '../providers/preferences_provider.dart';
+import '../providers/ui_provider.dart';
 
 /// 应用全局背景。
 ///
-/// 必须挂在 `MaterialApp` 的 `builder` 里，不能包在 `MaterialApp` 外面：包在
-/// 外面就取不到 `Theme.of(context)`，颜色只能写死，三套主题下长得一模一样。
-/// 之前正是那样——深棕底 + 粉蓝渐变 + 水彩插画常驻，日间主题于是变成「暖白
-/// 顶栏压在深棕插画上」，书架的书籍网格区没有任何底色，插画整片露出来。
+/// 必须挂在 `MaterialApp` 里面，不能包在外面：包在外面就取不到
+/// `Theme.of(context)`，颜色只能写死，三套主题下长得一模一样。之前正是那样
+/// ——深棕底 + 粉蓝渐变 + 水彩插画常驻，日间主题于是变成「暖白顶栏压在深棕
+/// 插画上」，书架的书籍网格区没有任何底色，插画整片露出来。
 ///
 /// 现在底色一律取当前配色方案的 `surface`，装饰层只是叠加。
+///
+/// 它是**每个页面各画一层**，不是整个应用只画一层压在最底下：主 Tab 的
+/// `MainShell` 一层，`GlassPageRoute` 推入的每个页面一层，阅读器在纸张主题
+/// 里再来一层（底色于是就是纸张色）。页面自己的 `Scaffold` 是透明的——由
+/// `AppTheme` 的 `scaffoldBackgroundColor` 统一给——所以背景在哪一页都看得见。
+/// 只画一层的话，推入的页面要么透出下面那页的内容，要么像以前那样自己再
+/// 铺一层 96% 不透明的 surface 把背景全盖掉，结果就是「背景只有书架有」。
 class AppBackground extends StatefulWidget {
   final Widget child;
   final AppBackgroundStyle style;
@@ -39,16 +49,51 @@ class AppBackground extends StatefulWidget {
   State<AppBackground> createState() => _AppBackgroundState();
 }
 
+/// 按用户偏好配置好的 [AppBackground]。页面级背景都从这里拿。
+class PreferredAppBackground extends ConsumerWidget {
+  final Widget child;
+
+  /// 阅读器传 false：正文旁边有东西在动很分神，也费电。
+  final bool animationEnabled;
+
+  const PreferredAppBackground({
+    super.key,
+    required this.child,
+    this.animationEnabled = true,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return AppBackground(
+      style: ref.watch(effectiveBackgroundStyleProvider),
+      customImagePath: ref.watch(customBackgroundPathProvider),
+      intensity: ref.watch(
+        preferencesProvider.select((p) => p.backgroundIntensity),
+      ),
+      animationEnabled: animationEnabled,
+      child: child,
+    );
+  }
+}
+
 class _AppBackgroundState extends State<AppBackground>
-    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   late final AnimationController _controller;
+
+  /// 图片层的不透明度。
+  ///
+  /// 是一个可变的 Animation 而不是每次 build 新建 `AlwaysStoppedAnimation`：
+  /// `RenderImage` 换 opacity 对象时只换监听、**不会** markNeedsPaint，而这层
+  /// 又在自己的 RepaintBoundary 里，没有别的东西会带着它重画——结果就是
+  /// 设置页拖浓度滑块，背景一动不动。改这个对象的 value 会通知监听者重画。
+  late final AnimationController _imageOpacity;
 
   /// [AppBackground.customImagePath] 指的文件在不在。
   ///
-  /// 缓存而不是每次 build 都 `existsSync()`：这个部件挂在 `MaterialApp.builder`
-  /// 里，每次路由切换、主题变化都会重建，每帧一次同步 stat 是主线程上的
-  /// 无谓开销。正常情况下 `customBackgroundPathProvider` 已经确认过文件存在，
-  /// 这里只是部件自己的兜底。
+  /// 缓存而不是每次 build 都 `existsSync()`：这个部件每次路由切换、主题变化
+  /// 都会重建，每帧一次同步 stat 是主线程上的无谓开销。正常情况下
+  /// `customBackgroundPathProvider` 已经确认过文件存在，这里只是部件自己的
+  /// 兜底。
   bool _customImageExists = false;
 
   bool get _wantsAnimation =>
@@ -58,9 +103,10 @@ class _AppBackgroundState extends State<AppBackground>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _controller = AnimationController(
+    _controller = AnimationController(vsync: this, duration: _gradientPeriod);
+    _imageOpacity = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 20),
+      value: widget.intensity.clamp(0.0, 1.0),
     );
     if (_wantsAnimation) _controller.repeat(reverse: true);
     _syncCustomImage();
@@ -70,6 +116,7 @@ class _AppBackgroundState extends State<AppBackground>
   void didUpdateWidget(AppBackground oldWidget) {
     super.didUpdateWidget(oldWidget);
     _syncAnimation();
+    _imageOpacity.value = widget.intensity.clamp(0.0, 1.0);
     if (oldWidget.customImagePath != widget.customImagePath) {
       _syncCustomImage();
     }
@@ -92,6 +139,7 @@ class _AppBackgroundState extends State<AppBackground>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _controller.dispose();
+    _imageOpacity.dispose();
     super.dispose();
   }
 
@@ -130,20 +178,15 @@ class _AppBackgroundState extends State<AppBackground>
       case AppBackgroundStyle.gradient:
         return [_gradients(scheme, intensity)];
       case AppBackgroundStyle.illustration:
-        return [
-          _imageLayer(
-            const AssetImage('assets/home_bg.png'),
-            intensity,
-          ),
-        ];
+        return [_imageLayer(const AssetImage('assets/home_bg.png'))];
       case AppBackgroundStyle.custom:
         final path = widget.customImagePath;
         if (path == null || !_customImageExists) return const [];
-        return [_imageLayer(FileImage(File(path)), intensity)];
+        return [_imageLayer(FileImage(File(path)))];
     }
   }
 
-  Widget _imageLayer(ImageProvider provider, double intensity) {
+  Widget _imageLayer(ImageProvider provider) {
     return Positioned.fill(
       child: RepaintBoundary(
         child: Image(
@@ -151,7 +194,7 @@ class _AppBackgroundState extends State<AppBackground>
           fit: BoxFit.cover,
           // 用 Image 自带的 opacity，不套 Opacity 部件：后者会为整屏开一层
           // 离屏缓冲（saveLayer），而这层背景在每一屏后面都在。
-          opacity: AlwaysStoppedAnimation<double>(intensity),
+          opacity: _imageOpacity,
           filterQuality: FilterQuality.medium,
           // 不设 cacheWidth。BoxFit.cover 在竖屏上是按长边铺满的，按屏幕
           // 尺寸算出来的宽度往往大于原图（内置插画只有 1024²），cacheWidth
@@ -177,7 +220,7 @@ class _AppBackgroundState extends State<AppBackground>
         child: AnimatedBuilder(
           animation: _controller,
           builder: (context, _) {
-            final val = _controller.value;
+            final val = _gradientPhase();
             return Stack(
               children: [
                 _blob(
@@ -228,4 +271,21 @@ class _AppBackgroundState extends State<AppBackground>
       ),
     );
   }
+}
+
+const _gradientPeriod = Duration(seconds: 20);
+
+/// 进程启动时刻。渐变的位置从它算，见 [_gradientPhase]。
+final _gradientEpoch = DateTime.now();
+
+/// 渐变走到哪了：0 → 1 → 0 来回，一个来回是 [_gradientPeriod] 的两倍。
+///
+/// 按挂钟算而不是读 `_controller.value`：每个页面各有一个 [AppBackground]，
+/// 各自的控制器从挂载那一刻起跳，两页之间淡入淡出时渐变就会瞬移一下。
+/// 挂钟是所有实例共用的，两边的位置永远一致。控制器只负责每帧触发重建。
+double _gradientPhase() {
+  final elapsed = DateTime.now().difference(_gradientEpoch).inMilliseconds /
+      _gradientPeriod.inMilliseconds;
+  final cycle = elapsed % 2;
+  return cycle <= 1 ? cycle : 2 - cycle;
 }

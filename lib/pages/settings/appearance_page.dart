@@ -34,7 +34,6 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
     final style = ref.watch(effectiveBackgroundStyleProvider);
 
     return Scaffold(
-      backgroundColor: stableSurfaceColor(context),
       appBar: AppBar(
         title: const Text('外观'),
         leading: Padding(

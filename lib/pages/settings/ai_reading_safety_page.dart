@@ -14,7 +14,6 @@ class AiReadingSafetyPage extends ConsumerWidget {
     final notifier = ref.read(spoilerProtectionProvider.notifier);
 
     return Scaffold(
-      backgroundColor: stableSurfaceColor(context),
       appBar: AppBar(title: const Text('AI 阅读安全')),
       body: ListView(
         padding: const EdgeInsets.all(16),

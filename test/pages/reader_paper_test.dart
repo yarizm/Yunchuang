@@ -7,12 +7,14 @@ import 'package:mocktail/mocktail.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yunchuang/database/app_database.dart';
 import 'package:yunchuang/models/reading_background.dart';
+import 'package:yunchuang/pages/reader/immersive_reader_shell.dart';
 import 'package:yunchuang/pages/reader/reader_data_loader.dart';
 import 'package:yunchuang/pages/reader/reader_page.dart';
 import 'package:yunchuang/providers/database_provider.dart';
 import 'package:yunchuang/providers/preferences_provider.dart';
 import 'package:yunchuang/services/tts_service.dart';
 import 'package:yunchuang/theme/app_theme.dart';
+import 'package:yunchuang/widgets/app_background.dart';
 
 class _MockFlutterTts extends Mock implements FlutterTts {}
 
@@ -38,7 +40,10 @@ class _MemoryReaderDataSource implements ReaderDataSource {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  /// 挂起阅读器，返回它的 Scaffold 底色与正文取到的主题。
+  /// 挂起阅读器，返回它的底色与正文取到的主题。
+  ///
+  /// 底色读的是阅读器里那层 AppBackground 的底——Scaffold 是透明的，纸张色
+  /// 由它画，背景装饰（插画 / 自选图）才能叠在纸上。
   Future<(Color background, ThemeData theme)> pumpReader(
     WidgetTester tester, {
     required Map<String, Object> initialPreferences,
@@ -122,24 +127,27 @@ void main() {
         ),
       ),
     );
-    // 加载中的那一屏也是个 Scaffold，但没设 backgroundColor。等到设了色的
-    // 那个出现，就说明正文已经就位。
-    final readerScaffold = find
-        .descendant(
-          of: find.byType(ReaderPage),
-          matching: find.byType(Scaffold),
-        )
-        .first;
-    Color? background;
+    // 加载中那一屏没有 ImmersiveReaderShell，它出现就说明正文已经就位。
+    final shell = find.byType(ImmersiveReaderShell);
     for (var attempt = 0; attempt < 100; attempt++) {
       await tester.pump(const Duration(milliseconds: 50));
-      if (readerScaffold.evaluate().isEmpty) continue;
-      background = tester.widget<Scaffold>(readerScaffold).backgroundColor;
-      if (background != null) break;
+      if (shell.evaluate().isNotEmpty) break;
     }
-    if (background == null) fail('阅读器没有加载出正文');
+    if (shell.evaluate().isEmpty) fail('阅读器没有加载出正文');
 
-    return (background, Theme.of(tester.element(readerScaffold)));
+    // AppBackground 的第一个 ColoredBox 就是底色那层。
+    final base = find
+        .descendant(
+          of: find.descendant(
+            of: find.byType(ReaderPage),
+            matching: find.byType(AppBackground),
+          ),
+          matching: find.byType(ColoredBox),
+        )
+        .first;
+    final background = tester.widget<ColoredBox>(base).color;
+
+    return (background, Theme.of(tester.element(shell)));
   }
 
   testWidgets('默认跟随主题时正文底色仍是主题的 surface', (tester) async {

@@ -223,7 +223,6 @@ class _WebDavPageState extends ConsumerState<WebDavPage> {
     final entries = _entries;
 
     return Scaffold(
-      backgroundColor: stableSurfaceColor(context),
       appBar: AppBar(
         title: const Text('WebDAV 同步'),
         leading: Padding(

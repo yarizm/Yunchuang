@@ -23,7 +23,6 @@ class ReadingPreferencesPage extends ConsumerWidget {
     );
 
     return Scaffold(
-      backgroundColor: stableSurfaceColor(context),
       appBar: AppBar(
         title: const Text('阅读偏好'),
         leading: Padding(
@@ -279,5 +278,4 @@ class ReadingPreferencesPage extends ConsumerWidget {
       ),
     );
   }
-
 }

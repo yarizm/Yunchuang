@@ -54,7 +54,8 @@ ThemeData readerThemeFor(ThemeData base, ReaderPaper paper) {
   return base.copyWith(
     brightness: scheme.brightness,
     colorScheme: scheme,
-    scaffoldBackgroundColor: background,
+    // scaffoldBackgroundColor 不动，沿用 AppTheme 的透明：纸张色由阅读器里的
+    // AppBackground 画，Scaffold 自己再铺一层就把背景装饰全盖掉了。
     // textTheme 必须一起换：AppTheme 是用 `.apply(bodyColor: ...)` 把字色写死
     // 进去的，只改 colorScheme 的话正文会保持旧主题的颜色。
     textTheme: base.textTheme.apply(
