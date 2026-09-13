@@ -380,14 +380,19 @@ void main() {
     await tester.tap(find.byKey(const Key('ai-provider-model-menu')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('从服务端拉取模型列表'));
-    await tester.pumpAndSettle();
+    // 搜索框自动聚焦，光标一直在闪，pumpAndSettle 等不到静止。
+    await tester.pump(const Duration(milliseconds: 600));
 
     expect(service.listedConfigs.single.apiKey, 'sk-test');
-    expect(find.textContaining('拉到 2 个模型'), findsOneWidget);
-
-    await tester.tap(find.byKey(const Key('ai-provider-model-menu')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('gpt-5.6-luna'));
+    // 拉完直接弹带搜索框的列表——服务端的列表动辄几百个，弹出菜单翻不动。
+    expect(find.byKey(const Key('ai-provider-model-search')), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const Key('ai-provider-model-search')),
+      'luna',
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.widgetWithText(ListTile, 'gpt-5.6-terra'), findsNothing);
+    await tester.tap(find.widgetWithText(ListTile, 'gpt-5.6-luna'));
     await tester.pumpAndSettle();
     expect(
       tester
@@ -396,6 +401,11 @@ void main() {
           .text,
       'gpt-5.6-luna',
     );
+
+    // 之后还能从下拉里再进那份列表。
+    await tester.tap(find.byKey(const Key('ai-provider-model-menu')));
+    await tester.pumpAndSettle();
+    expect(find.text('在拉到的 2 个模型里搜索'), findsOneWidget);
   });
 
   testWidgets('rejects an endpoint without an HTTP scheme', (tester) async {

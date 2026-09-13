@@ -282,14 +282,25 @@ class _UsageLine extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
-            width: 40, child: Text(label, style: theme.textTheme.bodySmall)),
+          width: 40,
+          child: Text(label, style: theme.textTheme.bodySmall),
+        ),
         Expanded(
-          child: Text(
-            '≈ ${formatTokenCount(prompt + completion)} tokens'
-            '（输入 ${formatTokenCount(prompt)} / 输出 ${formatTokenCount(completion)}）',
-            style: theme.textTheme.bodyMedium,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '≈ ${formatTokenCount(prompt + completion)} tokens',
+                style: theme.textTheme.bodyMedium,
+              ),
+              Text(
+                '输入 ${formatTokenCount(prompt)} · 输出 ${formatTokenCount(completion)}',
+                style: theme.textTheme.bodySmall,
+              ),
+            ],
           ),
         ),
         Text('$requests 次', style: theme.textTheme.bodySmall),

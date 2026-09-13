@@ -50,7 +50,13 @@ class _AiProviderFormPageState extends ConsumerState<AiProviderFormPage> {
     _nameCtrl = TextEditingController(text: p?.name ?? '');
     _urlCtrl = TextEditingController(text: p?.baseUrl ?? _defaultUrl(_type));
     _keyCtrl = TextEditingController(text: p?.apiKey ?? '');
-    _modelCtrl = TextEditingController(text: p?.modelName ?? '');
+    // 新建时端点默认是 OpenAI 的，模型也顺手填上模板的默认值。
+    _modelCtrl = TextEditingController(
+      text: p?.modelName ??
+          (AiProviderTemplate.matching(type: _type, baseUrl: _urlCtrl.text)
+                  ?.defaultModel ??
+              ''),
+    );
     _urlDrafts[_type] = _urlCtrl.text;
     _keyDrafts[_type] = _keyCtrl.text;
     _modelDrafts[_type] = _modelCtrl.text;
@@ -267,14 +273,15 @@ class _AiProviderFormPageState extends ConsumerState<AiProviderFormPage> {
                                   : 'gpt-5.6-terra'),
                           border: const OutlineInputBorder(),
                           suffixIcon: _ModelMenu(
-                            models: _fetchedModels.isNotEmpty
-                                ? _fetchedModels
-                                : (template?.models ?? const <String>[]),
+                            suggestions: template?.models ?? const [],
+                            fetchedCount: _fetchedModels.length,
                             loading: _loadingModels,
                             onPick: (model) => _modelCtrl.text = model,
                             onFetch: _saving || _testing || _loadingModels
                                 ? null
                                 : _fetchModels,
+                            onSearchFetched: () =>
+                                _showModelPicker(_fetchedModels),
                           ),
                         ),
                         validator: (v) =>
@@ -400,12 +407,26 @@ class _AiProviderFormPageState extends ConsumerState<AiProviderFormPage> {
         return;
       }
       setState(() => _fetchedModels = models);
-      _toast('拉到 ${models.length} 个模型，点模型框右侧选择');
+      await _showModelPicker(models);
     } catch (error) {
       if (mounted) _toast('拉取失败：${describeAIError(error)}');
     } finally {
       if (mounted) setState(() => _loadingModels = false);
     }
+  }
+
+  /// 服务端的列表动辄几百个（OpenRouter 四百多），弹出菜单翻不动，
+  /// 用带搜索框的底部面板。
+  Future<void> _showModelPicker(List<String> models) async {
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => _ModelPickerSheet(
+        models: models,
+        current: _modelCtrl.text.trim(),
+      ),
+    );
+    if (picked != null && mounted) _modelCtrl.text = picked;
   }
 
   void _switchProviderType(String nextType) {
@@ -591,21 +612,27 @@ class _ConsoleLink extends StatelessWidget {
   }
 }
 
-/// 模型框右侧的下拉：模板里的建议 / 服务端拉回来的列表，以及「从服务端拉取」。
+/// 模型框右侧的下拉：模板里的建议、「从服务端拉取」，拉过之后还有
+/// 「在拉到的列表里搜索」。
 class _ModelMenu extends StatelessWidget {
-  final List<String> models;
+  final List<String> suggestions;
+  final int fetchedCount;
   final bool loading;
   final ValueChanged<String> onPick;
   final VoidCallback? onFetch;
+  final VoidCallback onSearchFetched;
 
   const _ModelMenu({
-    required this.models,
+    required this.suggestions,
+    required this.fetchedCount,
     required this.loading,
     required this.onPick,
     required this.onFetch,
+    required this.onSearchFetched,
   });
 
-  static const _fetchValue = ' fetch';
+  static const _fetchValue = '\u0000fetch';
+  static const _searchValue = '\u0000search';
 
   @override
   Widget build(BuildContext context) {
@@ -625,26 +652,106 @@ class _ModelMenu extends StatelessWidget {
       onSelected: (value) {
         if (value == _fetchValue) {
           onFetch?.call();
+        } else if (value == _searchValue) {
+          onSearchFetched();
         } else {
           onPick(value);
         }
       },
       itemBuilder: (context) => [
-        for (final model in models)
+        for (final model in suggestions)
           PopupMenuItem(value: model, child: Text(model)),
-        if (models.isNotEmpty) const PopupMenuDivider(),
+        if (suggestions.isNotEmpty) const PopupMenuDivider(),
+        if (fetchedCount > 0)
+          PopupMenuItem(
+            value: _searchValue,
+            child: Row(
+              children: [
+                const Icon(Icons.search, size: 18),
+                const SizedBox(width: 8),
+                Text('在拉到的 $fetchedCount 个模型里搜索'),
+              ],
+            ),
+          ),
         PopupMenuItem(
           value: _fetchValue,
           enabled: onFetch != null,
-          child: const Row(
+          child: Row(
             children: [
-              Icon(Icons.cloud_download_outlined, size: 18),
-              SizedBox(width: 8),
-              Text('从服务端拉取模型列表'),
+              const Icon(Icons.cloud_download_outlined, size: 18),
+              const SizedBox(width: 8),
+              Text(fetchedCount > 0 ? '重新从服务端拉取' : '从服务端拉取模型列表'),
             ],
           ),
         ),
       ],
+    );
+  }
+}
+
+/// 带搜索框的模型列表。
+class _ModelPickerSheet extends StatefulWidget {
+  final List<String> models;
+  final String current;
+
+  const _ModelPickerSheet({required this.models, required this.current});
+
+  @override
+  State<_ModelPickerSheet> createState() => _ModelPickerSheetState();
+}
+
+class _ModelPickerSheetState extends State<_ModelPickerSheet> {
+  String _query = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final query = _query.trim().toLowerCase();
+    final shown = query.isEmpty
+        ? widget.models
+        : [
+            for (final model in widget.models)
+              if (model.toLowerCase().contains(query)) model,
+          ];
+    return SafeArea(
+      child: DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.8,
+        builder: (context, controller) => Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: TextField(
+                key: const Key('ai-provider-model-search'),
+                autofocus: true,
+                decoration: InputDecoration(
+                  prefixIcon: const Icon(Icons.search),
+                  hintText: '搜索 ${widget.models.length} 个模型',
+                  border: const OutlineInputBorder(),
+                  isDense: true,
+                ),
+                onChanged: (value) => setState(() => _query = value),
+              ),
+            ),
+            Expanded(
+              child: shown.isEmpty
+                  ? const Center(child: Text('没有匹配的模型'))
+                  : ListView.builder(
+                      controller: controller,
+                      itemCount: shown.length,
+                      itemBuilder: (context, index) {
+                        final model = shown[index];
+                        return ListTile(
+                          dense: true,
+                          title: Text(model),
+                          selected: model == widget.current,
+                          onTap: () => Navigator.pop(context, model),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

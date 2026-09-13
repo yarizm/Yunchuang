@@ -66,7 +66,7 @@ void main() {
 
     // 顶部汇总 + 卡片里的今日 / 累计
     expect(find.text('≈ 1.63k'), findsNWidgets(2));
-    expect(find.textContaining('输入 1.30k / 输出 334'), findsNWidgets(2));
+    expect(find.text('输入 1.30k · 输出 334'), findsNWidgets(2));
     expect(find.textContaining('1 次按字数估算'), findsOneWidget);
     expect(find.text('2 次'), findsNWidgets(2));
 
