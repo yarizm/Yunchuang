@@ -19,17 +19,13 @@ Android · Windows · MIT
 
 ## 书架
 
-<table><tr><td width="62%" valign="top">
-
 分组（一本书可属多个书架）、系列、阅读状态、网格 / 列表视图、排序、封面与元数据编辑。
 
 桌面端可把文件或文件夹拖进窗口；Android 可从文件管理器「打开方式」或其他应用分享进来。导入时自动识别 GBK / GB18030 / UTF-16 等编码，TXT 按中英文章节标题自动分章。
 
-</td><td width="38%"><img src="screenshots/shelf.png" width="260" alt="书架" /></td></tr></table>
+<img src="screenshots/shelf.png" width="280" alt="书架" />
 
 ## 阅读
-
-<table><tr><td width="62%" valign="top">
 
 | 格式 | 说明 |
 |------|------|
@@ -41,44 +37,36 @@ Android · Windows · MIT
 - 阅读进度精确到章节内位置，退出再进回到原处
 - 手机可设「阅读时横屏」：进阅读器自动转横屏，退出恢复
 
-</td><td width="38%"><img src="screenshots/reader.png" width="260" alt="阅读" /></td></tr></table>
+<img src="screenshots/reader.png" width="280" alt="阅读" />
 
 ### 目录与跳转
 
-<table><tr><td width="62%" valign="top">
-
 目录、书签、跳转历史：从目录、搜索结果或 AI 引用跳走之后，可以一键回到上一个阅读位置。
 
-</td><td width="38%"><img src="screenshots/toc.png" width="260" alt="目录" /></td></tr></table>
+<img src="screenshots/toc.png" width="280" alt="目录" />
 
 ### 排版与纸张
-
-<table><tr><td width="62%" valign="top">
 
 字号、行高、边距、段距、字距、字体、对齐、段首缩进：全局默认，可按书覆盖。
 
 正文底色独立于全局主题：白 / 米白 / 杏仁 / 豆绿 / 灰蓝 / 暗灰 / 纯黑，或自选底色，字色按对比度自动配。想黑底白字读书，不必把书架和设置页一起变暗。
 
-</td><td width="38%"><img src="screenshots/paper.png" width="260" alt="正文纸张" /></td></tr></table>
+<img src="screenshots/paper.png" width="280" alt="正文纸张" />
 
 ### EPUB
 
-<table><tr><td width="62%" valign="top">
-
 EPUB 正文按 HTML 的空白规则转成文本：硬换行折成空格，汉字之间不留空格，脚注链接可点。Gutenberg 一类按固定宽度硬换行的 EPUB 读起来和正常排版一样。
 
-</td><td width="38%"><img src="screenshots/reader-epub.png" width="260" alt="EPUB" /></td></tr></table>
+<img src="screenshots/reader-epub.png" width="280" alt="EPUB" />
 
 ## 笔记
-
-<table><tr><td width="62%" valign="top">
 
 划线、高亮、写批注；标签分类、笔记间关联；笔记页按书分组，可按标签筛选。
 
 - 导入：微信读书 HTML、Kindle `My Clippings.txt`、CSV、JSON
 - 导出：Markdown、CSV
 
-</td><td width="38%"><img src="screenshots/notes.png" width="260" alt="笔记" /></td></tr></table>
+<img src="screenshots/notes.png" width="280" alt="笔记" />
 
 ## 搜索
 
@@ -86,19 +74,15 @@ EPUB 正文按 HTML 的空白规则转成文本：硬换行折成空格，汉字
 
 ## AI 助手
 
-<table><tr><td width="62%" valign="top">
-
 在阅读页里直接问。AI 带四个工具，按需调用：搜当前书、读章节摘录、搜笔记、读当前阅读上下文。回答下方列出引用来源，点一下跳回原文。
 
 内置几个快捷问法（总结本章、本章提纲、续写本章），也可以自己定义技能（限定可用工具的预设指令）和角色人设（可从书中生成，和书里的人物对话）。
 
 会话按书保存，可以随时换一个话题重新开始。
 
-</td><td width="38%"><img src="screenshots/ai-chat.png" width="260" alt="AI 对话" /></td></tr></table>
+<img src="screenshots/ai-chat.png" width="280" alt="AI 对话" />
 
 ### 不剧透
-
-<table><tr><td width="62%" valign="top">
 
 **默认不剧透。** AI 能读到的内容截止到你当前的阅读位置，可全局设置或按书覆盖：
 
@@ -110,27 +94,23 @@ EPUB 正文按 HTML 的空白规则转成文本：硬换行折成空格，汉字
 
 限制在工具执行层生效，越界章节不会进入模型上下文。
 
-</td><td width="38%"><img src="screenshots/ai-safety.png" width="260" alt="AI 阅读安全" /></td></tr></table>
+<img src="screenshots/ai-safety.png" width="280" alt="AI 阅读安全" />
 
 ### 接入服务商
-
-<table><tr><td width="62%" valign="top">
 
 接 OpenAI 兼容接口、Ollama 或 Dify。内置 OpenAI、Claude、Gemini、DeepSeek、通义千问、Kimi、智谱、硅基流动、OpenRouter、Ollama、Dify 的接入模板：选一个，端点和模型自动填好，填上 Key 就能用。模型名可以直接从服务端拉取列表选，不用翻文档。
 
 Key 只存在本机，备份不会带走它。
 
-</td><td width="38%"><img src="screenshots/ai-provider.png" width="260" alt="接入模板" /></td></tr></table>
+<img src="screenshots/ai-provider.png" width="280" alt="接入模板" />
 
 ### 用量
-
-<table><tr><td width="62%" valign="top">
 
 每个 Provider 的 token 用量按天记录：今日 / 累计，输入 / 输出，折线或柱状图看最近 7 / 14 / 30 天。服务端返回了 usage 用准确值，没返回的按字数估并标注。
 
 只是计数，不折算成钱——各家各模型的价格不一样。
 
-</td><td width="38%"><img src="screenshots/ai-usage.png" width="260" alt="AI 用量" /></td></tr></table>
+<img src="screenshots/ai-usage.png" width="280" alt="AI 用量" />
 
 ## 词典、生词本、翻译
 
@@ -144,11 +124,9 @@ Key 只存在本机，备份不会带走它。
 
 ## 统计
 
-<table><tr><td width="62%" valign="top">
-
 今日 / 本周 / 本月 / 累计时长，连续阅读天数，单书时长排行，一年阅读热力图。
 
-</td><td width="38%"><img src="screenshots/stats.png" width="260" alt="统计" /></td></tr></table>
+<img src="screenshots/stats.png" width="280" alt="统计" />
 
 ## 备份
 
@@ -156,11 +134,9 @@ Key 只存在本机，备份不会带走它。
 
 ## 外观
 
-<table><tr><td width="62%" valign="top">
-
 Light / Sepia / Dark / 跟随系统。全局背景可选纯色、主题色渐变、内置插画或自己的图片，浓度可调，书架、设置和阅读页都看得见。
 
-</td><td width="38%"><img src="screenshots/reader-dark.png" width="260" alt="暗色" /></td></tr></table>
+<img src="screenshots/reader-dark.png" width="280" alt="暗色" />
 
 ## 限制
 
