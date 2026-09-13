@@ -15,57 +15,90 @@ Android · Windows · MIT
 | Android | `yunchuang-<版本>-android-arm64-v8a.apk` | 64 位 ARM 设备，Android 7.0+ |
 | Windows | `yunchuang-<版本>-windows-x64.zip` | Windows 10+，解压后运行 `yunchuang.exe` |
 
-## 截图
+截图里的示例书目来自 [Project Gutenberg](https://www.gutenberg.org/)，均为公有领域作品；AI 回答用的是本地假服务，只为展示界面。
 
-<p>
-  <img src="screenshots/shelf.png" width="24%" alt="书架" />
-  <img src="screenshots/reader.png" width="24%" alt="阅读" />
-  <img src="screenshots/toc.png" width="24%" alt="目录" />
-  <img src="screenshots/notes.png" width="24%" alt="笔记" />
-</p>
-<p>
-  <img src="screenshots/stats.png" width="24%" alt="统计" />
-  <img src="screenshots/paper.png" width="24%" alt="正文纸张" />
-  <img src="screenshots/reader-dark.png" width="24%" alt="暗色纸张" />
-  <img src="screenshots/reader-epub.png" width="24%" alt="EPUB" />
-</p>
+## 书架
 
-示例书目来自 [Project Gutenberg](https://www.gutenberg.org/)，均为公有领域作品。
+<table><tr><td width="62%" valign="top">
 
-## 功能
+分组（一本书可属多个书架）、系列、阅读状态、网格 / 列表视图、排序、封面与元数据编辑。
 
-### 阅读
+桌面端可把文件或文件夹拖进窗口；Android 可从文件管理器「打开方式」或其他应用分享进来。导入时自动识别 GBK / GB18030 / UTF-16 等编码，TXT 按中英文章节标题自动分章。
+
+</td><td width="38%"><img src="screenshots/shelf.png" width="260" alt="书架" /></td></tr></table>
+
+## 阅读
+
+<table><tr><td width="62%" valign="top">
 
 | 格式 | 说明 |
 |------|------|
-| EPUB | 可选中文本、划词菜单 |
-| PDF | 页面渲染，划词查词、加生词本 |
-| TXT | 自动分章（中英文章节标题），自动识别 GBK / GB18030 / UTF-16 等编码 |
+| EPUB | 可选中文本、划词菜单，封面按规范读取 |
+| PDF | 页面渲染，划词查词、加生词本，横屏可双页 |
+| TXT | 自动分章，自动识别编码 |
 
-- 滚动 / 分页两种模式；手机可设「阅读时横屏」
-- 目录、书签、跳转历史（回到上一个阅读位置）
-- 字号、行高、边距、段距、字距、字体、对齐、段首缩进：全局默认，可按书覆盖
-- 正文底色独立于全局主题：白 / 米白 / 杏仁 / 豆绿 / 灰蓝 / 暗灰 / 纯黑，或自选底色，字色按对比度自动配
-- 阅读进度精确到章节内位置
+- 滚动 / 分页两种模式，分页有仿真、滑动、简洁三种翻页效果
+- 阅读进度精确到章节内位置，退出再进回到原处
+- 手机可设「阅读时横屏」：进阅读器自动转横屏，退出恢复
 
-### 书架
+</td><td width="38%"><img src="screenshots/reader.png" width="260" alt="阅读" /></td></tr></table>
 
-分组（一本书可属多个书架）、系列、阅读状态、网格 / 列表视图、排序、封面与元数据编辑。桌面端可把文件或文件夹拖进窗口；Android 可从文件管理器「打开方式」或其他应用分享进来。
+### 目录与跳转
 
-### 笔记
+<table><tr><td width="62%" valign="top">
+
+目录、书签、跳转历史：从目录、搜索结果或 AI 引用跳走之后，可以一键回到上一个阅读位置。
+
+</td><td width="38%"><img src="screenshots/toc.png" width="260" alt="目录" /></td></tr></table>
+
+### 排版与纸张
+
+<table><tr><td width="62%" valign="top">
+
+字号、行高、边距、段距、字距、字体、对齐、段首缩进：全局默认，可按书覆盖。
+
+正文底色独立于全局主题：白 / 米白 / 杏仁 / 豆绿 / 灰蓝 / 暗灰 / 纯黑，或自选底色，字色按对比度自动配。想黑底白字读书，不必把书架和设置页一起变暗。
+
+</td><td width="38%"><img src="screenshots/paper.png" width="260" alt="正文纸张" /></td></tr></table>
+
+### EPUB
+
+<table><tr><td width="62%" valign="top">
+
+EPUB 正文按 HTML 的空白规则转成文本：硬换行折成空格，汉字之间不留空格，脚注链接可点。Gutenberg 一类按固定宽度硬换行的 EPUB 读起来和正常排版一样。
+
+</td><td width="38%"><img src="screenshots/reader-epub.png" width="260" alt="EPUB" /></td></tr></table>
+
+## 笔记
+
+<table><tr><td width="62%" valign="top">
 
 划线、高亮、写批注；标签分类、笔记间关联；笔记页按书分组，可按标签筛选。
 
 - 导入：微信读书 HTML、Kindle `My Clippings.txt`、CSV、JSON
 - 导出：Markdown、CSV
 
-### 搜索
+</td><td width="38%"><img src="screenshots/notes.png" width="260" alt="笔记" /></td></tr></table>
+
+## 搜索
 
 书名 / 作者、笔记、正文全文三处一起搜，结果直接跳到原文位置。中日韩文本走子串匹配（正文有 trigram 索引加速），其他语种走 FTS5。
 
-### AI 助手
+## AI 助手
 
-接 OpenAI 兼容接口、Ollama 或 Dify。内置 OpenAI、Claude、Gemini、DeepSeek、通义千问、Kimi、智谱、硅基流动、OpenRouter 的接入模板，选一个填 Key 就能用，模型名可以从服务端拉取。每个 Provider 的 token 用量（今日 / 累计，输入 / 输出）在设置里能看，服务端返回了 usage 用准确值，没有的按字数估。AI 带四个工具：搜当前书、读章节摘录、搜笔记、读当前阅读上下文，按需调用。
+<table><tr><td width="62%" valign="top">
+
+在阅读页里直接问。AI 带四个工具，按需调用：搜当前书、读章节摘录、搜笔记、读当前阅读上下文。回答下方列出引用来源，点一下跳回原文。
+
+内置几个快捷问法（总结本章、本章提纲、续写本章），也可以自己定义技能（限定可用工具的预设指令）和角色人设（可从书中生成，和书里的人物对话）。
+
+会话按书保存，可以随时换一个话题重新开始。
+
+</td><td width="38%"><img src="screenshots/ai-chat.png" width="260" alt="AI 对话" /></td></tr></table>
+
+### 不剧透
+
+<table><tr><td width="62%" valign="top">
 
 **默认不剧透。** AI 能读到的内容截止到你当前的阅读位置，可全局设置或按书覆盖：
 
@@ -75,29 +108,59 @@ Android · Windows · MIT
 | 访问前询问 | 需要未读内容时先请求本次授权 |
 | 允许全书 | 可检索后续章节 |
 
-限制在工具执行层生效，越界章节不会进入模型上下文。另有技能（限定可用工具的预设指令）和角色人设（可从书中生成）。
+限制在工具执行层生效，越界章节不会进入模型上下文。
 
-### 词典、生词本、翻译
+</td><td width="38%"><img src="screenshots/ai-safety.png" width="260" alt="AI 阅读安全" /></td></tr></table>
+
+### 接入服务商
+
+<table><tr><td width="62%" valign="top">
+
+接 OpenAI 兼容接口、Ollama 或 Dify。内置 OpenAI、Claude、Gemini、DeepSeek、通义千问、Kimi、智谱、硅基流动、OpenRouter、Ollama、Dify 的接入模板：选一个，端点和模型自动填好，填上 Key 就能用。模型名可以直接从服务端拉取列表选，不用翻文档。
+
+Key 只存在本机，备份不会带走它。
+
+</td><td width="38%"><img src="screenshots/ai-provider.png" width="260" alt="接入模板" /></td></tr></table>
+
+### 用量
+
+<table><tr><td width="62%" valign="top">
+
+每个 Provider 的 token 用量按天记录：今日 / 累计，输入 / 输出，折线或柱状图看最近 7 / 14 / 30 天。服务端返回了 usage 用准确值，没返回的按字数估并标注。
+
+只是计数，不折算成钱——各家各模型的价格不一样。
+
+</td><td width="38%"><img src="screenshots/ai-usage.png" width="260" alt="AI 用量" /></td></tr></table>
+
+## 词典、生词本、翻译
 
 - 导入 StarDict 离线词典，划词即查，多词典可同时启用
 - 生词本记录出处，可回到原文
 - 划选文本翻译（发送给默认 AI Provider，仅在你点击时发送）
 
-### TTS
+## TTS
 
 断点续播、语速独立调节、朗读计时；迷你播放器和全屏控制面板。Android 接入媒体会话，通知栏可控、后台播放。
 
-### 统计
+## 统计
+
+<table><tr><td width="62%" valign="top">
 
 今日 / 本周 / 本月 / 累计时长，连续阅读天数，单书时长排行，一年阅读热力图。
 
-### 备份
+</td><td width="38%"><img src="screenshots/stats.png" width="260" alt="统计" /></td></tr></table>
+
+## 备份
 
 一键导出 ZIP（数据库、书籍、封面、偏好、自定义背景图），从 ZIP 完整还原；可上传到自己的 WebDAV 网盘并设置每天 / 每周自动上传。备份不含 AI 密钥与 WebDAV 凭据。Android 系统自动备份已关闭，书库不会被同步到 Google Drive。
 
-### 外观
+## 外观
 
-Light / Sepia / Dark / 跟随系统。全局背景可选纯色、主题色渐变、内置插画或自己的图片，浓度可调。
+<table><tr><td width="62%" valign="top">
+
+Light / Sepia / Dark / 跟随系统。全局背景可选纯色、主题色渐变、内置插画或自己的图片，浓度可调，书架、设置和阅读页都看得见。
+
+</td><td width="38%"><img src="screenshots/reader-dark.png" width="260" alt="暗色" /></td></tr></table>
 
 ## 限制
 
