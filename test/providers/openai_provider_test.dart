@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
@@ -152,6 +153,32 @@ void main() {
       final chunks = await provider.chatStream('Hi').toList();
 
       expect(chunks, ['A', 'B']);
+    });
+
+    // Dio 的响应体是 Stream<Uint8List>。bytes.transform(utf8.decoder) 在运行时
+    // 要求 StreamTransformer<Uint8List, String>，Utf8Decoder 不是，会抛
+    // TypeError——测试里用 Stream<List<int>> 看不出来，真机上流式全挂。
+    test('chatStream accepts a Stream<Uint8List> body like Dio gives',
+        () async {
+      final body = Stream<Uint8List>.fromIterable([
+        Uint8List.fromList(
+          utf8.encode('data: {"choices":[{"delta":{"content":"真"}}]}\n'),
+        ),
+        Uint8List.fromList(
+          utf8.encode('data: {"choices":[{"delta":{"content":"机"}}]}\n'),
+        ),
+      ]);
+      when(() => mockDio.post(
+            any(),
+            data: any(named: 'data'),
+            options: any(named: 'options'),
+          )).thenAnswer((_) async => Response(
+            requestOptions: RequestOptions(),
+            statusCode: 200,
+            data: FakeStreamBody(body),
+          ));
+
+      expect(await provider.chatStream('Hi').toList(), ['真', '机']);
     });
 
     test('chatStream joins array content deltas', () async {

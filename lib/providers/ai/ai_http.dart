@@ -92,7 +92,10 @@ Stream<T> runCancellableDioStreamRequest<T>(
 
 Stream<String> decodeUtf8Lines(Stream<List<int>> bytes) async* {
   var buffer = '';
-  await for (final chunk in bytes.transform(utf8.decoder)) {
+  // 用 bind 而不是 bytes.transform(utf8.decoder)：Dio 给的是 Stream<Uint8List>，
+  // transform 会在运行时要求一个 StreamTransformer<Uint8List, String>，
+  // Utf8Decoder 不是，直接抛 TypeError——真机上流式回复整个失败。
+  await for (final chunk in utf8.decoder.bind(bytes)) {
     buffer += chunk;
     while (true) {
       final newline = buffer.indexOf('\n');

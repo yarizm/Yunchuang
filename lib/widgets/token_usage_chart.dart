@@ -29,7 +29,9 @@ class TokenUsageChart extends StatelessWidget {
         days: days,
         style: style,
         promptColor: scheme.primary,
-        completionColor: scheme.tertiary,
+        // 主题的强调色都是木色系，secondary / tertiary 和 primary 挨在一起
+        // 分不开，输出用淡一档的同色。
+        completionColor: scheme.primary.withValues(alpha: 0.4),
         gridColor: scheme.outlineVariant.withValues(alpha: 0.6),
         labelStyle: theme.textTheme.labelSmall?.copyWith(
               color: scheme.onSurfaceVariant,
@@ -86,12 +88,13 @@ class _TokenUsagePainter extends CustomPainter {
     _paintDateLabels(canvas, plot);
   }
 
-  /// 取一个「好看」的上限：1、2、5 × 10^n，至少 100。
+  /// 取一个「好看」的上限：1 / 1.2 / 1.5 / 2 / 2.5 / 3 / 4 / 5 / 6 / 8 × 10^n，
+  /// 至少 100。步子细一点，最高的柱子才不会只到图的一半。
   static int _niceCeiling(int maxValue) {
     if (maxValue <= 100) return 100;
     final magnitude = math.pow(10, (math.log(maxValue) / math.ln10).floor());
-    for (final step in const [1, 2, 5, 10]) {
-      final candidate = (step * magnitude).toInt();
+    for (final step in const [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) {
+      final candidate = (step * magnitude).round();
       if (candidate >= maxValue) return candidate;
     }
     return maxValue;

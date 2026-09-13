@@ -248,7 +248,10 @@ class _ChartCard extends StatelessWidget {
               if (style == TokenChartStyle.bar) ...[
                 _LegendDot(color: scheme.primary, label: '输入'),
                 const SizedBox(width: 10),
-                _LegendDot(color: scheme.tertiary, label: '输出'),
+                _LegendDot(
+                  color: scheme.primary.withValues(alpha: 0.4),
+                  label: '输出',
+                ),
               ] else
                 _LegendDot(color: scheme.primary, label: '每天总量'),
             ],
