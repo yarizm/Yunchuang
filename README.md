@@ -42,7 +42,7 @@ Android · Windows · MIT
 | PDF | 页面渲染，划词查词、加生词本 |
 | TXT | 自动分章（中英文章节标题），自动识别 GBK / GB18030 / UTF-16 等编码 |
 
-- 滚动 / 分页两种模式
+- 滚动 / 分页两种模式；横屏时分页模式左右两页并排，手机可设「阅读时横屏」
 - 目录、书签、跳转历史（回到上一个阅读位置）
 - 字号、行高、边距、段距、字距、字体、对齐、段首缩进：全局默认，可按书覆盖
 - 正文底色独立于全局主题：白 / 米白 / 杏仁 / 豆绿 / 灰蓝 / 暗灰 / 纯黑，或自选底色，字色按对比度自动配
@@ -65,7 +65,7 @@ Android · Windows · MIT
 
 ### AI 助手
 
-接 OpenAI 兼容接口、Ollama 或 Dify，自己填 Provider。AI 带四个工具：搜当前书、读章节摘录、搜笔记、读当前阅读上下文，按需调用。
+接 OpenAI 兼容接口、Ollama 或 Dify。内置 OpenAI、Claude、Gemini、DeepSeek、通义千问、Kimi、智谱、硅基流动、OpenRouter 的接入模板，选一个填 Key 就能用，模型名可以从服务端拉取。每个 Provider 的 token 用量（今日 / 累计，输入 / 输出）在设置里能看，服务端返回了 usage 用准确值，没有的按字数估。AI 带四个工具：搜当前书、读章节摘录、搜笔记、读当前阅读上下文，按需调用。
 
 **默认不剧透。** AI 能读到的内容截止到你当前的阅读位置，可全局设置或按书覆盖：
 
@@ -133,7 +133,7 @@ Android 签名：复制 `android/key.properties.example` 为 `android/key.proper
 | 状态管理 | Riverpod 2.x |
 | 路由 | GoRouter |
 | 数据库 | Drift + SQLite + FTS5 |
-| 测试 | flutter_test + mocktail，106 个测试文件 |
+| 测试 | flutter_test + mocktail，109 个测试文件 |
 
 ```
 lib/

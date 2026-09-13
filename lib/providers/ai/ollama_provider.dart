@@ -3,11 +3,13 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'ai_http.dart';
 import 'ai_provider.dart';
+import 'ai_usage.dart';
 
 class OllamaProvider
     implements AIProvider, CancellableAIProvider, DisposableAIProvider {
   final String baseUrl;
   final String model;
+  final AIUsageListener? onUsage;
   final Dio _dio;
   final bool _ownsDio;
   var _disposed = false;
@@ -15,6 +17,7 @@ class OllamaProvider
   OllamaProvider({
     this.baseUrl = 'http://localhost:11434',
     required this.model,
+    this.onUsage,
     Dio? dio,
   })  : _dio = dio ?? Dio(aiProviderBaseOptions(baseUrl)),
         _ownsDio = dio == null;
@@ -72,10 +75,44 @@ class OllamaProvider
           : _dio.post('/api/chat', data: data, cancelToken: cancelToken),
     );
 
-    return readNestedString(
+    final text = readNestedString(
       response.data,
       ['message', 'content'],
       'Ollama chat response',
+    );
+    _reportUsage(
+      exact: _usageFromChunk(response.data),
+      messages: messages,
+      completion: text,
+    );
+    return text;
+  }
+
+  /// Ollama 在最后一个块里给 `prompt_eval_count` / `eval_count`。
+  static AIUsage? _usageFromChunk(Object? data) {
+    if (data is! Map) return null;
+    final prompt = data['prompt_eval_count'];
+    final completion = data['eval_count'];
+    if (prompt is! num && completion is! num) return null;
+    return AIUsage(
+      promptTokens: prompt is num ? prompt.toInt() : 0,
+      completionTokens: completion is num ? completion.toInt() : 0,
+    );
+  }
+
+  void _reportUsage({
+    required AIUsage? exact,
+    required List<Map<String, String>> messages,
+    required String completion,
+  }) {
+    final listener = onUsage;
+    if (listener == null) return;
+    listener(
+      exact ??
+          AIUsage.estimate(
+            promptTexts: messages.map((m) => m['content'] ?? ''),
+            completion: completion,
+          ),
     );
   }
 
@@ -113,21 +150,42 @@ class OllamaProvider
       'stream': true,
     };
     final options = Options(responseType: ResponseType.stream);
-    yield* runCancellableDioStreamRequest<String>(
-      cancellation,
-      (cancelToken) => cancelToken == null
-          ? _dio.post('/api/chat', data: data, options: options)
-          : _dio.post(
-              '/api/chat',
-              data: data,
-              options: options,
-              cancelToken: cancelToken,
-            ),
-      _decodeResponseStream,
-    );
+    final collected = StringBuffer();
+    AIUsage? exact;
+    try {
+      await for (final chunk in runCancellableDioStreamRequest<String>(
+        cancellation,
+        (cancelToken) => cancelToken == null
+            ? _dio.post('/api/chat', data: data, options: options)
+            : _dio.post(
+                '/api/chat',
+                data: data,
+                options: options,
+                cancelToken: cancelToken,
+              ),
+        (response) => _decodeResponseStream(
+          response,
+          onUsage: (usage) => exact = usage,
+        ),
+      )) {
+        collected.write(chunk);
+        yield chunk;
+      }
+    } finally {
+      if (exact != null || collected.isNotEmpty) {
+        _reportUsage(
+          exact: exact,
+          messages: messages,
+          completion: collected.toString(),
+        );
+      }
+    }
   }
 
-  Stream<String> _decodeResponseStream(Response<dynamic> response) async* {
+  Stream<String> _decodeResponseStream(
+    Response<dynamic> response, {
+    required AIUsageListener onUsage,
+  }) async* {
     final stream = response.data.stream as Stream<List<int>>;
     await for (final line in decodeUtf8Lines(stream)) {
       if (line.trim().isEmpty) continue;
@@ -139,6 +197,8 @@ class OllamaProvider
         if (error != null) {
           throw AIProviderResponseException('Ollama 流式响应失败：$error');
         }
+        final usage = _usageFromChunk(data);
+        if (usage != null) onUsage(usage);
         final content = data['message']?['content'] as String?;
         if (content != null && content.isNotEmpty) yield content;
       } on AIProviderResponseException {
@@ -147,6 +207,32 @@ class OllamaProvider
         // Skip malformed lines without terminating the remaining response.
       }
     }
+  }
+
+  /// `GET /api/tags`：本机已经拉取的模型。
+  Future<List<String>> listModels() async {
+    final response = await _dio.get('/api/tags');
+    final data = response.data;
+    if (data is! Map) {
+      throw const FormatException('Ollama tags response 不是 JSON 对象');
+    }
+    final error = providerErrorMessage(data['error']);
+    if (error != null) {
+      throw AIProviderResponseException('Ollama 返回错误：$error');
+    }
+    final models = data['models'];
+    if (models is! List) {
+      throw const FormatException('Ollama tags response 缺少 models 列表');
+    }
+    return models
+        .whereType<Map>()
+        .map((item) => item['name'] ?? item['model'])
+        .whereType<String>()
+        .map((name) => name.trim())
+        .where((name) => name.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
   }
 
   @override

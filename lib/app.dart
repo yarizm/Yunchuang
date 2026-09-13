@@ -8,6 +8,7 @@ import 'pages/stats/reading_stats_page.dart';
 import 'pages/settings/settings_page.dart';
 import 'theme/app_theme.dart';
 import 'utils/app_orientation.dart';
+import 'providers/database_provider.dart';
 import 'providers/preferences_provider.dart';
 import 'providers/webdav_provider.dart';
 import 'widgets/app_background.dart';
@@ -93,6 +94,8 @@ class _MainShellState extends ConsumerState<MainShell> {
   void initState() {
     super.initState();
     _applyOrientation(ref.read(preferencesProvider).preferredOrientation);
+    // 用量计数器要在第一次 AI 请求之前接到 AIService 上，见它的注释。
+    ref.read(aiUsageTrackerProvider);
     _maybeAutoBackup();
   }
 

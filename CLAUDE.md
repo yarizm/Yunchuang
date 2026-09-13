@@ -150,7 +150,11 @@ Drift ORM（`drift` + `sqlite3_flutter_libs`），数据库文件 `reading_offli
 - `OllamaProvider` — `/api/chat`，支持流式 + `/api/tags` 健康检查
 - `DifyProvider` — `/chat-messages`，支持流式
 
-`AIService` 作为工厂类，从数据库读取默认 provider 配置并实例化。
+`AIService` 作为工厂类，从数据库读取默认 provider 配置并实例化。`type` 里的 `openai` 和 `custom` 都走 `OpenAIProvider`——Claude（`api.anthropic.com/v1`）、Gemini（`…/v1beta/openai`）、DeepSeek、通义千问、Kimi、智谱、硅基流动、OpenRouter 全是 OpenAI 兼容接口。
+
+**接入模板**（`ai_provider_templates.dart`）：常见服务商的端点、建议模型、拿 Key 的地址，表单里「从模板填入」用。模型名核对于 2026-09，**会过期**——表单的模型框还能「从服务端拉取模型列表」（`AIService.listModels`：OpenAI 兼容的 `GET /models`、Ollama 的 `/api/tags`），这才是长期可靠的路。更新模板时去各家文档核实 id，别凭记忆写。
+
+**token 用量**（`ai_usage.dart`）：三个 Provider 都带 `onUsage` 回调，服务端返回了 usage（OpenAI 的 `usage`、流式要开 `stream_options.include_usage`；Ollama 的 `prompt_eval_count/eval_count`；Dify 的 `metadata.usage`）就报准确值，没有就按字数估（`estimateTokenCount`：中文 0.7 token / 字，其他 4 字符 / token）并标 `estimated`。`AiUsageTracker` 按 Provider 累计今日 / 累计，存在偏好的 `aiUsage` 键里，不进数据库。它通过 `aiUsageTrackerProvider` 把自己接到 `AIService.usageSink` 上，所以 `MainShell.initState` 要读它一下——不在 `aiServiceProvider` 里 watch 它，否则每个用到 AI 的测试都得先准备 SharedPreferences。个别兼容服务不认 `stream_options` 会回 400，`OpenAIProvider` 会去掉重试并记住。
 
 ### Agent 层
 
@@ -163,7 +167,7 @@ Drift ORM（`drift` + `sqlite3_flutter_libs`），数据库文件 `reading_offli
 - **Personas**（`ai_personas` 表）：角色人设注入 system prompt，支持从书籍内容生成角色，生成过程可中断并通过 `CharacterPersonaCheckpointStore` 断点续做
 - **剧透保护**（`spoiler_protection_provider.dart`）：限制 AI 读取当前阅读进度之后的内容，可按书覆盖全局设置
 
-UI 在 `widgets/ai_chat_panel.dart`（阅读器内嵌）和 `pages/ai/ai_chat_page.dart`。
+UI 在 `widgets/ai_chat_panel.dart`（阅读器内嵌）和 `pages/ai/ai_chat_page.dart`。Provider 配置在 `pages/settings/ai_provider_form.dart`，用量在 `ai_usage_page.dart`。
 
 ## 主题与背景
 
@@ -185,7 +189,7 @@ UI 在 `widgets/ai_chat_panel.dart`（阅读器内嵌）和 `pages/ai/ai_chat_pa
 
 ## 测试
 
-106 个测试文件，覆盖 database / models / pages / parsers / providers / services / widgets。提交前应确保 `flutter analyze` 无告警、`flutter test` 全绿。
+109 个测试文件，覆盖 database / models / pages / parsers / providers / services / widgets。提交前应确保 `flutter analyze` 无告警、`flutter test` 全绿。
 
 性能相关测试（`reader_performance_test.dart`、`home_shelf_performance_test.dart`）约束重建次数，修改阅读器或书架渲染逻辑时容易触发失败，需认真对待而非直接调整阈值。另见 `PERFORMANCE.md`。
 

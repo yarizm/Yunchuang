@@ -6,11 +6,22 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yunchuang/database/app_database.dart';
 import 'package:yunchuang/database/daos/ai_dao.dart';
 import 'package:yunchuang/pages/settings/ai_provider_form.dart';
+import 'package:yunchuang/providers/ai/ai_provider_templates.dart';
 import 'package:yunchuang/providers/ai/ai_service.dart';
 import 'package:yunchuang/providers/database_provider.dart';
 
+/// 表单加了模板按钮之后比 800×600 的测试窗口高，底部的「测试连接」「保存」
+/// 会滚到看不见的地方，点不到。
+void useTallViewport(WidgetTester tester) {
+  tester.view.physicalSize = const Size(800, 1400);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+}
+
 void main() {
   testWidgets('opens provider configuration manual', (tester) async {
+    useTallViewport(tester);
     final database = AppDatabase.connect(NativeDatabase.memory());
     addTearDown(database.close);
 
@@ -35,6 +46,7 @@ void main() {
 
   testWidgets('shows provider-specific troubleshooting when test fails',
       (tester) async {
+    useTallViewport(tester);
     final database = AppDatabase.connect(NativeDatabase.memory());
     addTearDown(database.close);
 
@@ -59,11 +71,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('手机不能使用 localhost'), findsOneWidget);
-    expect(find.textContaining('局域网 IP'), findsOneWidget);
+    expect(find.textContaining('局域网 IP'), findsWidgets);
   });
 
   testWidgets('dify configuration does not require a model name',
       (tester) async {
+    useTallViewport(tester);
     final database = AppDatabase.connect(NativeDatabase.memory());
     addTearDown(database.close);
     final service = _FailingAIService(database);
@@ -96,6 +109,7 @@ void main() {
   });
 
   testWidgets('dify configuration requires an App API Key', (tester) async {
+    useTallViewport(tester);
     final database = AppDatabase.connect(NativeDatabase.memory());
     addTearDown(database.close);
     final service = _FailingAIService(database);
@@ -122,6 +136,7 @@ void main() {
 
   testWidgets('preserves separate drafts while switching provider templates',
       (tester) async {
+    useTallViewport(tester);
     final database = AppDatabase.connect(NativeDatabase.memory());
     addTearDown(database.close);
 
@@ -214,6 +229,7 @@ void main() {
 
   testWidgets('shows an actionable authentication error from the provider',
       (tester) async {
+    useTallViewport(tester);
     final database = AppDatabase.connect(NativeDatabase.memory());
     addTearDown(database.close);
 
@@ -238,6 +254,7 @@ void main() {
 
   testWidgets('trims saved fields and makes the first provider default',
       (tester) async {
+    useTallViewport(tester);
     final database = AppDatabase.connect(NativeDatabase.memory());
     addTearDown(database.close);
 
@@ -264,7 +281,125 @@ void main() {
     expect(saved.single.isDefault, isTrue);
   });
 
+  // 模板：选一个就把类型、端点、模型、名称填好，只剩 Key 要填。
+  testWidgets('a template fills endpoint, model and name; key stays empty',
+      (tester) async {
+    useTallViewport(tester);
+    final database = AppDatabase.connect(NativeDatabase.memory());
+    addTearDown(database.close);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [databaseProvider.overrideWithValue(database)],
+        child: const MaterialApp(home: AiProviderFormPage()),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('ai-provider-template-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('ai-provider-template-deepseek')));
+    await tester.pumpAndSettle();
+
+    final template = AiProviderTemplate.byId('deepseek')!;
+    String fieldText(int index) =>
+        tester.widget<TextFormField>(find.byType(TextFormField).at(index))
+            .controller!
+            .text;
+    expect(fieldText(0), template.name);
+    expect(fieldText(1), template.baseUrl);
+    expect(fieldText(2), '');
+    expect(fieldText(3), template.defaultModel);
+    expect(find.text('模板：${template.name}'), findsOneWidget);
+    expect(find.textContaining(template.consoleUrl!), findsOneWidget);
+
+    // 模型框右侧能从模板的建议里换一个。
+    await tester.tap(find.byKey(const Key('ai-provider-model-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(template.models[1]));
+    await tester.pumpAndSettle();
+    expect(fieldText(3), template.models[1]);
+
+    // 手改端点之后模板就不再声称匹配。
+    await tester.enterText(
+      find.byType(TextFormField).at(1),
+      'https://my-proxy.example/v1',
+    );
+    await tester.pump();
+    expect(find.text('从模板填入'), findsOneWidget);
+  });
+
+  testWidgets('editing a saved provider recognises its template',
+      (tester) async {
+    useTallViewport(tester);
+    final database = AppDatabase.connect(NativeDatabase.memory());
+    addTearDown(database.close);
+    final template = AiProviderTemplate.byId('kimi')!;
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [databaseProvider.overrideWithValue(database)],
+        child: MaterialApp(
+          home: AiProviderFormPage(
+            provider: AiProvider(
+              id: 1,
+              name: 'Kimi',
+              type: 'openai',
+              baseUrl: '${template.baseUrl}/',
+              apiKey: 'k',
+              modelName: 'kimi-k3',
+              isDefault: true,
+              extraConfig: null,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('模板：${template.name}'), findsOneWidget);
+  });
+
+  // 模型名会过时：可以直接问服务端要列表。
+  testWidgets('fetches the model list from the server into the model menu',
+      (tester) async {
+    useTallViewport(tester);
+    final database = AppDatabase.connect(NativeDatabase.memory());
+    addTearDown(database.close);
+    final service = _ModelListingAIService(database);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          databaseProvider.overrideWithValue(database),
+          aiServiceProvider.overrideWithValue(service),
+        ],
+        child: const MaterialApp(home: AiProviderFormPage()),
+      ),
+    );
+
+    await tester.enterText(find.byType(TextFormField).at(2), 'sk-test');
+    await tester.tap(find.byKey(const Key('ai-provider-model-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('从服务端拉取模型列表'));
+    await tester.pumpAndSettle();
+
+    expect(service.listedConfigs.single.apiKey, 'sk-test');
+    expect(find.textContaining('拉到 2 个模型'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('ai-provider-model-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('gpt-5.6-luna'));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextFormField>(find.byType(TextFormField).at(3))
+          .controller!
+          .text,
+      'gpt-5.6-luna',
+    );
+  });
+
   testWidgets('rejects an endpoint without an HTTP scheme', (tester) async {
+    useTallViewport(tester);
     final database = AppDatabase.connect(NativeDatabase.memory());
     addTearDown(database.close);
     final service = _FailingAIService(database);
@@ -292,6 +427,7 @@ void main() {
 
   testWidgets('keeps the form open and reports provider save failures',
       (tester) async {
+    useTallViewport(tester);
     final database = AppDatabase.connect(NativeDatabase.memory());
     addTearDown(database.close);
 
@@ -316,6 +452,18 @@ void main() {
       findsOneWidget,
     );
   });
+}
+
+class _ModelListingAIService extends AIService {
+  final listedConfigs = <AiProvider>[];
+
+  _ModelListingAIService(AppDatabase database) : super(AiDao(database));
+
+  @override
+  Future<List<String>> listModels(AiProvider config) async {
+    listedConfigs.add(config);
+    return ['gpt-5.6-luna', 'gpt-5.6-terra'];
+  }
 }
 
 class _FailingAIService extends AIService {

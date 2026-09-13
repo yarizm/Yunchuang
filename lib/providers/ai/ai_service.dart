@@ -2,6 +2,7 @@ import '../../database/app_database.dart';
 import '../../database/daos/ai_dao.dart';
 import 'package:drift/drift.dart';
 import 'ai_provider.dart';
+import 'ai_usage.dart';
 import 'openai_provider.dart';
 import 'ollama_provider.dart';
 import 'dify_provider.dart';
@@ -9,6 +10,10 @@ import 'dify_provider.dart';
 class AIService {
   final AiDao _aiDao;
   AIProvider? _cachedProvider;
+
+  /// token 用量往这里记。由 aiUsageTrackerProvider 在启动时接上；没接
+  /// （测试）就不记。
+  AIUsageSink? usageSink;
 
   AIService(this._aiDao);
 
@@ -19,35 +24,50 @@ class AIService {
     final providerRow = await _aiDao.getDefaultProvider();
     if (providerRow == null) return null;
 
-    _cachedProvider = _createProvider(providerRow);
+    _cachedProvider = _createProvider(providerRow, trackUsage: true);
     return _cachedProvider;
   }
 
   /// Create provider instance from database row
-  AIProvider _createProvider(AiProvider row) {
+  ///
+  /// [trackUsage] 只在正式使用的实例上开：测试连接那一下不算用量。
+  AIProvider _createProvider(AiProvider row, {bool trackUsage = false}) {
+    final onUsage = trackUsage
+        ? (AIUsage usage) => usageSink?.record(row.id, usage)
+        : null;
     switch (row.type) {
-      case 'openai':
-        return OpenAIProvider(
-          baseUrl: row.baseUrl,
-          apiKey: row.apiKey,
-          model: row.modelName,
-        );
       case 'ollama':
         return OllamaProvider(
           baseUrl: row.baseUrl,
           model: row.modelName,
+          onUsage: onUsage,
         );
       case 'dify':
         return DifyProvider(
           baseUrl: row.baseUrl,
           apiKey: row.apiKey ?? '',
+          onUsage: onUsage,
         );
-      default:
+      default: // openai 与 custom 都是 OpenAI 兼容接口
         return OpenAIProvider(
           baseUrl: row.baseUrl,
           apiKey: row.apiKey,
           model: row.modelName,
+          onUsage: onUsage,
         );
+    }
+  }
+
+  /// 拉取某个配置下可用的模型列表（OpenAI 兼容的 `/models`、Ollama 的
+  /// `/api/tags`）。Dify 没有模型的概念，返回空列表。
+  Future<List<String>> listModels(AiProvider config) async {
+    final provider = _createProvider(config);
+    try {
+      if (provider is OpenAIProvider) return await provider.listModels();
+      if (provider is OllamaProvider) return await provider.listModels();
+      return const [];
+    } finally {
+      _releaseProvider(provider);
     }
   }
 
@@ -100,6 +120,7 @@ class AIService {
 
   Future<void> deleteProvider(int providerId) async {
     await _aiDao.deleteProviderKeepingDefault(providerId);
+    usageSink?.forget(providerId);
     clearCache();
   }
 

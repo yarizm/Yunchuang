@@ -3,12 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../database/app_database.dart';
 import '../../providers/ai/ai_http.dart';
+import '../../providers/ai/ai_usage.dart';
 import '../../providers/database_provider.dart';
 import '../../theme/glass_page_route.dart';
 import '../../widgets/glass_container.dart';
 import '../../widgets/empty_state.dart';
 import 'ai_assets_page.dart';
 import 'ai_provider_form.dart';
+import 'ai_usage_page.dart';
 
 class AiProviderListPage extends ConsumerStatefulWidget {
   const AiProviderListPage({super.key});
@@ -23,6 +25,7 @@ class _AiProviderListPageState extends ConsumerState<AiProviderListPage> {
   @override
   Widget build(BuildContext context) {
     final providersAsync = ref.watch(allAiProvidersProvider);
+    final usageTracker = ref.watch(aiUsageTrackerProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -35,6 +38,15 @@ class _AiProviderListPageState extends ConsumerState<AiProviderListPage> {
           ),
         ),
         actions: [
+          IconButton(
+            key: const Key('ai-provider-usage'),
+            icon: const Icon(Icons.data_usage_outlined),
+            tooltip: 'AI 用量',
+            onPressed: () => Navigator.push(
+              context,
+              GlassPageRoute(builder: (_) => const AiUsagePage()),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.extension),
             tooltip: 'AI 扩展',
@@ -104,6 +116,7 @@ class _AiProviderListPageState extends ConsumerState<AiProviderListPage> {
             itemBuilder: (context, index) {
               final p = providers[index];
               final deleting = _deletingProviderIds.contains(p.id);
+              final usage = usageTracker.usageFor(p.id);
               return GlassContainer.stable(
                 margin: const EdgeInsets.only(bottom: 12),
                 padding: EdgeInsets.zero,
@@ -112,7 +125,14 @@ class _AiProviderListPageState extends ConsumerState<AiProviderListPage> {
                   child: ListTile(
                     leading: Icon(_iconForType(p.type)),
                     title: Text(p.name),
-                    subtitle: Text('${p.type} · ${p.modelName}'),
+                    subtitle: Text(
+                      usage.isEmpty
+                          ? '${p.type} · ${p.modelName}'
+                          : '${p.type} · ${p.modelName}\n'
+                              '今日 ≈ ${formatTokenCount(usage.todayTotalTokens)}'
+                              ' · 累计 ≈ ${formatTokenCount(usage.totalTokens)} tokens',
+                    ),
+                    isThreeLine: !usage.isEmpty,
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [

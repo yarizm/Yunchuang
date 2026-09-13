@@ -9,9 +9,13 @@ import 'package:yunchuang/database/daos/ai_dao.dart';
 import 'package:yunchuang/pages/settings/ai_provider_list.dart';
 import 'package:yunchuang/providers/ai/ai_service.dart';
 import 'package:yunchuang/providers/database_provider.dart';
+import 'package:yunchuang/providers/preferences_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   testWidgets('retries provider loading after an error', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final preferences = await SharedPreferences.getInstance();
     final database = AppDatabase.connect(NativeDatabase.memory());
     addTearDown(database.close);
     final service = _RetryingProviderService(database);
@@ -20,6 +24,7 @@ void main() {
       ProviderScope(
         overrides: [
           databaseProvider.overrideWithValue(database),
+          sharedPreferencesProvider.overrideWithValue(preferences),
           aiServiceProvider.overrideWithValue(service),
         ],
         child: const MaterialApp(home: AiProviderListPage()),
@@ -40,6 +45,8 @@ void main() {
 
   testWidgets('reports a delete failure and keeps the provider actionable',
       (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final preferences = await SharedPreferences.getInstance();
     final database = AppDatabase.connect(NativeDatabase.memory());
     addTearDown(database.close);
     final service = _DeletingProviderService(database, shouldFail: true);
@@ -48,6 +55,7 @@ void main() {
       ProviderScope(
         overrides: [
           databaseProvider.overrideWithValue(database),
+          sharedPreferencesProvider.overrideWithValue(preferences),
           aiServiceProvider.overrideWithValue(service),
         ],
         child: const MaterialApp(home: AiProviderListPage()),
@@ -67,6 +75,8 @@ void main() {
 
   testWidgets('disables repeated deletion while the request is pending',
       (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final preferences = await SharedPreferences.getInstance();
     final database = AppDatabase.connect(NativeDatabase.memory());
     addTearDown(database.close);
     final service = _PendingDeleteProviderService(database);
@@ -75,6 +85,7 @@ void main() {
       ProviderScope(
         overrides: [
           databaseProvider.overrideWithValue(database),
+          sharedPreferencesProvider.overrideWithValue(preferences),
           aiServiceProvider.overrideWithValue(service),
         ],
         child: const MaterialApp(home: AiProviderListPage()),

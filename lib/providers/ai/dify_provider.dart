@@ -3,11 +3,13 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'ai_http.dart';
 import 'ai_provider.dart';
+import 'ai_usage.dart';
 
 class DifyProvider
     implements AIProvider, CancellableAIProvider, DisposableAIProvider {
   final String baseUrl;
   final String apiKey;
+  final AIUsageListener? onUsage;
   final Dio _dio;
   final bool _ownsDio;
   var _disposed = false;
@@ -15,6 +17,7 @@ class DifyProvider
   DifyProvider({
     required this.baseUrl,
     required this.apiKey,
+    this.onUsage,
     Dio? dio,
   })  : _dio = dio ?? Dio(aiProviderBaseOptions(baseUrl)),
         _ownsDio = dio == null;
@@ -55,9 +58,10 @@ class DifyProvider
     List<ChatMessage>? history,
     AIRequestCancellation? cancellation,
   }) async {
+    final query = _queryWithHistory(message, history);
     final data = {
       'inputs': {},
-      'query': _queryWithHistory(message, history),
+      'query': query,
       'response_mode': 'blocking',
       'user': 'local-user',
     };
@@ -79,10 +83,37 @@ class DifyProvider
             ),
     );
 
-    return readNestedString(
+    final text = readNestedString(
       response.data,
       ['answer'],
       'Dify chat response',
+    );
+    _reportUsage(
+      exact: _usageFromMetadata(response.data),
+      query: query,
+      completion: text,
+    );
+    return text;
+  }
+
+  /// Dify 把用量放在 `metadata.usage` 里（阻塞响应和流式的 message_end
+  /// 事件都有）。
+  static AIUsage? _usageFromMetadata(Object? data) {
+    if (data is! Map) return null;
+    final metadata = data['metadata'];
+    if (metadata is! Map) return null;
+    return AIUsage.fromOpenAi(metadata['usage']);
+  }
+
+  void _reportUsage({
+    required AIUsage? exact,
+    required String query,
+    required String completion,
+  }) {
+    final listener = onUsage;
+    if (listener == null) return;
+    listener(
+      exact ?? AIUsage.estimate(promptTexts: [query], completion: completion),
     );
   }
 
@@ -109,9 +140,10 @@ class DifyProvider
     List<ChatMessage>? history,
     AIRequestCancellation? cancellation,
   }) async* {
+    final query = _queryWithHistory(message, history);
     final data = {
       'inputs': {},
-      'query': _queryWithHistory(message, history),
+      'query': query,
       'response_mode': 'streaming',
       'user': 'local-user',
     };
@@ -122,21 +154,42 @@ class DifyProvider
       },
       responseType: ResponseType.stream,
     );
-    yield* runCancellableDioStreamRequest<String>(
-      cancellation,
-      (cancelToken) => cancelToken == null
-          ? _dio.post('/chat-messages', data: data, options: options)
-          : _dio.post(
-              '/chat-messages',
-              data: data,
-              options: options,
-              cancelToken: cancelToken,
-            ),
-      _decodeResponseStream,
-    );
+    final collected = StringBuffer();
+    AIUsage? exact;
+    try {
+      await for (final chunk in runCancellableDioStreamRequest<String>(
+        cancellation,
+        (cancelToken) => cancelToken == null
+            ? _dio.post('/chat-messages', data: data, options: options)
+            : _dio.post(
+                '/chat-messages',
+                data: data,
+                options: options,
+                cancelToken: cancelToken,
+              ),
+        (response) => _decodeResponseStream(
+          response,
+          onUsage: (usage) => exact = usage,
+        ),
+      )) {
+        collected.write(chunk);
+        yield chunk;
+      }
+    } finally {
+      if (exact != null || collected.isNotEmpty) {
+        _reportUsage(
+          exact: exact,
+          query: query,
+          completion: collected.toString(),
+        );
+      }
+    }
   }
 
-  Stream<String> _decodeResponseStream(Response<dynamic> response) async* {
+  Stream<String> _decodeResponseStream(
+    Response<dynamic> response, {
+    required AIUsageListener onUsage,
+  }) async* {
     final stream = response.data.stream as Stream<List<int>>;
     await for (final payload in decodeSseData(stream)) {
       try {
@@ -149,6 +202,10 @@ class DifyProvider
               ) ??
               '未知错误';
           throw AIProviderResponseException('Dify 流式响应失败：$error');
+        }
+        if (data['event'] == 'message_end') {
+          final usage = _usageFromMetadata(data);
+          if (usage != null) onUsage(usage);
         }
         final answer = data['answer'] as String?;
         if (answer != null && answer.isNotEmpty) yield answer;

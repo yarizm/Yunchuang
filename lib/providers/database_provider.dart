@@ -12,6 +12,8 @@ import '../database/daos/ai_dao.dart';
 import '../services/book_service.dart';
 import '../services/dictionary_service.dart';
 import '../providers/ai/ai_service.dart';
+import '../providers/ai/ai_usage.dart';
+import 'preferences_provider.dart';
 import '../providers/ai/ai_agent_service.dart';
 import '../providers/ai/ai_asset_service.dart';
 import '../providers/ai/ai_persona_selection_store.dart';
@@ -80,6 +82,16 @@ final aiServiceProvider = Provider<AIService>((ref) {
   final service = AIService(ref.watch(aiDaoProvider));
   ref.onDispose(service.dispose);
   return service;
+});
+
+/// token 用量计数器。创建时把自己接到 AIService 上，所以得有人在启动时
+/// 读它一下（MainShell 干这事），不然在打开用量页之前什么都记不到。
+/// 不在 aiServiceProvider 里 watch 它：那样每个用到 AI 的测试都得先准备
+/// SharedPreferences。
+final aiUsageTrackerProvider = ChangeNotifierProvider<AiUsageTracker>((ref) {
+  final tracker = AiUsageTracker(ref.watch(sharedPreferencesProvider));
+  ref.watch(aiServiceProvider).usageSink = tracker;
+  return tracker;
 });
 
 final aiAgentServiceProvider = Provider<AIAgentService>((ref) {

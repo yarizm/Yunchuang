@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:dio/dio.dart';
 import 'package:yunchuang/providers/ai/ai_http.dart';
+import 'package:yunchuang/providers/ai/ai_usage.dart';
 import 'package:yunchuang/providers/ai/openai_provider.dart';
 
 class MockDio extends Mock implements Dio {}
@@ -194,6 +195,213 @@ void main() {
           ),
         ),
       );
+    });
+  });
+
+  group('OpenAIProvider usage', () {
+    late MockDio mockDio;
+    late List<AIUsage> reported;
+    late OpenAIProvider provider;
+
+    setUp(() {
+      mockDio = MockDio();
+      reported = [];
+      provider = OpenAIProvider(
+        baseUrl: 'https://api.example.test/v1',
+        apiKey: 'k',
+        model: 'm',
+        dio: mockDio,
+        onUsage: reported.add,
+      );
+    });
+
+    test('chat reports the usage block from the response', () async {
+      when(() => mockDio.post(
+            any(),
+            data: any(named: 'data'),
+            options: any(named: 'options'),
+          )).thenAnswer((_) async => Response(
+            requestOptions: RequestOptions(),
+            statusCode: 200,
+            data: {
+              'choices': [
+                {
+                  'message': {'content': 'Hello!'}
+                }
+              ],
+              'usage': {'prompt_tokens': 11, 'completion_tokens': 2},
+            },
+          ));
+
+      await provider.chat('Hi');
+
+      expect(reported, [
+        const AIUsage(promptTokens: 11, completionTokens: 2),
+      ]);
+    });
+
+    test('chat estimates when the response carries no usage', () async {
+      when(() => mockDio.post(
+            any(),
+            data: any(named: 'data'),
+            options: any(named: 'options'),
+          )).thenAnswer((_) async => Response(
+            requestOptions: RequestOptions(),
+            statusCode: 200,
+            data: {
+              'choices': [
+                {
+                  'message': {'content': 'Hello world!'}
+                }
+              ],
+            },
+          ));
+
+      await provider.chat('Hi there');
+
+      expect(reported, hasLength(1));
+      expect(reported.single.estimated, isTrue);
+      expect(reported.single.promptTokens, estimatePromptTokens(['Hi there']));
+      expect(
+        reported.single.completionTokens,
+        estimateTokenCount('Hello world!'),
+      );
+    });
+
+    test('chatStream asks for usage and reads it from the final event',
+        () async {
+      Map<String, dynamic>? sent;
+      when(() => mockDio.post(
+            any(),
+            data: any(named: 'data'),
+            options: any(named: 'options'),
+          )).thenAnswer((invocation) async {
+        sent = Map<String, dynamic>.from(
+          invocation.namedArguments[#data] as Map,
+        );
+        return Response(
+          requestOptions: RequestOptions(),
+          statusCode: 200,
+          data: FakeStreamBody(Stream.fromIterable([
+            utf8.encode('data: {"choices":[{"delta":{"content":"A"}}]}\n'),
+            utf8.encode('data: {"choices":[{"delta":{"content":"B"}}]}\n'),
+            utf8.encode(
+              'data: {"choices":[],"usage":{"prompt_tokens":9,'
+              '"completion_tokens":2}}\n',
+            ),
+            utf8.encode('data: [DONE]\n'),
+          ])),
+        );
+      });
+
+      expect(await provider.chatStream('Hi').toList(), ['A', 'B']);
+      expect(sent?['stream_options'], {'include_usage': true});
+      expect(reported, [
+        const AIUsage(promptTokens: 9, completionTokens: 2),
+      ]);
+    });
+
+    test('chatStream estimates from the collected text without usage',
+        () async {
+      when(() => mockDio.post(
+            any(),
+            data: any(named: 'data'),
+            options: any(named: 'options'),
+          )).thenAnswer((_) async => Response(
+            requestOptions: RequestOptions(),
+            statusCode: 200,
+            data: FakeStreamBody(Stream.value(utf8.encode(
+              'data: {"choices":[{"delta":{"content":"Hello world"}}]}\n',
+            ))),
+          ));
+
+      await provider.chatStream('Hi').toList();
+
+      expect(reported, hasLength(1));
+      expect(reported.single.estimated, isTrue);
+      expect(
+        reported.single.completionTokens,
+        estimateTokenCount('Hello world'),
+      );
+    });
+
+    // 个别兼容服务不认 stream_options，直接 400。去掉重试一次，之后不再带。
+    test('chatStream retries without stream_options after a 400', () async {
+      final sentBodies = <Map<String, dynamic>>[];
+      when(() => mockDio.post(
+            any(),
+            data: any(named: 'data'),
+            options: any(named: 'options'),
+          )).thenAnswer((invocation) async {
+        final body = Map<String, dynamic>.from(
+          invocation.namedArguments[#data] as Map,
+        );
+        sentBodies.add(body);
+        if (body.containsKey('stream_options')) {
+          throw DioException.badResponse(
+            statusCode: 400,
+            requestOptions: RequestOptions(),
+            response: Response(
+              requestOptions: RequestOptions(),
+              statusCode: 400,
+            ),
+          );
+        }
+        return Response(
+          requestOptions: RequestOptions(),
+          statusCode: 200,
+          data: FakeStreamBody(Stream.value(utf8.encode(
+            'data: {"choices":[{"delta":{"content":"ok"}}]}\n',
+          ))),
+        );
+      });
+
+      expect(await provider.chatStream('Hi').toList(), ['ok']);
+      expect(sentBodies, hasLength(2));
+      expect(sentBodies.last.containsKey('stream_options'), isFalse);
+
+      // 第二次直接不带。
+      expect(await provider.chatStream('Again').toList(), ['ok']);
+      expect(sentBodies, hasLength(3));
+      expect(sentBodies.last.containsKey('stream_options'), isFalse);
+    });
+
+    test('a failure before any output is not counted', () async {
+      when(() => mockDio.post(
+            any(),
+            data: any(named: 'data'),
+            options: any(named: 'options'),
+          )).thenThrow(DioException.badResponse(
+        statusCode: 401,
+        requestOptions: RequestOptions(),
+        response: Response(requestOptions: RequestOptions(), statusCode: 401),
+      ));
+
+      await expectLater(
+        provider.chatStream('Hi').toList(),
+        throwsA(isA<DioException>()),
+      );
+      expect(reported, isEmpty);
+    });
+
+    test('listModels reads ids from GET /models', () async {
+      when(() => mockDio.get(any(), options: any(named: 'options')))
+          .thenAnswer((_) async => Response(
+                requestOptions: RequestOptions(),
+                statusCode: 200,
+                data: {
+                  'data': [
+                    {'id': 'gpt-5.6-terra'},
+                    {'id': 'gpt-5.6-luna'},
+                    {'id': 'gpt-5.6-luna'},
+                    {'object': 'model'},
+                  ],
+                },
+              ));
+
+      expect(await provider.listModels(), ['gpt-5.6-luna', 'gpt-5.6-terra']);
+      verify(() => mockDio.get('/models', options: any(named: 'options')))
+          .called(1);
     });
   });
 
