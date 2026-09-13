@@ -91,6 +91,58 @@ void main() {
       expect(tracker.usageFor(1).totalTokens, 131);
     });
 
+    test('按天记录，dailySeries 给最近 N 天（没记录的天是 0）', () {
+      final tracker = AiUsageTracker(prefs, now: () => now);
+      now = DateTime(2026, 9, 10, 9);
+      tracker.record(1, const AIUsage(promptTokens: 100, completionTokens: 10));
+      now = DateTime(2026, 9, 12, 9);
+      tracker.record(1, const AIUsage(promptTokens: 200, completionTokens: 20));
+      tracker.record(2, const AIUsage(promptTokens: 5, completionTokens: 5));
+
+      final series = tracker.dailySeries(days: 4);
+      expect(series.map((d) => d.date.day), [9, 10, 11, 12]);
+      expect(series.map((d) => d.usage.totalTokens), [0, 110, 0, 230]);
+      expect(series.last.usage.promptTokens, 205);
+      expect(series.last.usage.requests, 2);
+
+      // 单个 Provider
+      final one = tracker.dailySeries(days: 4, providerId: 2);
+      expect(one.map((d) => d.usage.totalTokens), [0, 0, 0, 10]);
+      // 累计数不受按天记录影响
+      expect(tracker.usageFor(1).totalTokens, 330);
+    });
+
+    test('按天记录只留最近 60 天，累计数照加', () {
+      final tracker = AiUsageTracker(prefs, now: () => now);
+      for (var i = 0; i < 70; i++) {
+        now = DateTime(2026, 1, 1).add(Duration(days: i));
+        tracker.record(1, const AIUsage(promptTokens: 1, completionTokens: 0));
+      }
+      final usage = tracker.usageFor(1);
+      expect(usage.days.length, AiProviderUsage.keptDays);
+      expect(usage.days.keys.reduce((a, b) => a.compareTo(b) < 0 ? a : b),
+          '2026-01-11');
+      expect(usage.promptTokens, 70);
+    });
+
+    test('读得懂没有 days 的老格式', () {
+      final usage = AiProviderUsage.fromJson({
+        'prompt': 48210,
+        'completion': 9130,
+        'requests': 37,
+        'estimatedRequests': 4,
+        'todayKey': '2026-09-13',
+        'todayPrompt': 3120,
+        'todayCompletion': 880,
+        'todayRequests': 5,
+        'since': '2026-09-01T09:00:00.000',
+      });
+      expect(usage.totalTokens, 57340);
+      expect(usage.forDay('2026-09-13').todayTotalTokens, 4000);
+      expect(usage.forDay('2026-09-14').todayTotalTokens, 0);
+      expect(usage.days['2026-09-13']?.requests, 5);
+    });
+
     test('存进偏好，重新构造能读回来', () {
       AiUsageTracker(prefs, now: () => now)
           .record(5, const AIUsage(promptTokens: 30, completionTokens: 4));

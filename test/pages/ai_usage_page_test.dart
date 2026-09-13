@@ -10,6 +10,7 @@ import 'package:yunchuang/pages/settings/ai_usage_page.dart';
 import 'package:yunchuang/providers/ai/ai_usage.dart';
 import 'package:yunchuang/providers/database_provider.dart';
 import 'package:yunchuang/providers/preferences_provider.dart';
+import 'package:yunchuang/widgets/token_usage_chart.dart';
 
 void main() {
   Future<({AppDatabase database, ProviderContainer container, int id})> setUp(
@@ -77,6 +78,36 @@ void main() {
 
     expect(find.text('还没有用过'), findsOneWidget);
     expect(tracker.usageFor(env.id).isEmpty, isTrue);
+  });
+
+  testWidgets('chart switches between line and bar and between ranges',
+      (tester) async {
+    final env = await setUp(tester, home: const AiUsagePage());
+    expect(find.text('最近 14 天没有用量'), findsOneWidget);
+
+    env.container.read(aiUsageTrackerProvider).record(
+          env.id,
+          const AIUsage(promptTokens: 700, completionTokens: 300),
+        );
+    await tester.pumpAndSettle();
+
+    TokenUsageChart chart() =>
+        tester.widget<TokenUsageChart>(find.byType(TokenUsageChart));
+    expect(chart().style, TokenChartStyle.line);
+    expect(chart().days, hasLength(14));
+    expect(chart().days.last.usage.totalTokens, 1000);
+    expect(find.text('每天总量'), findsOneWidget);
+
+    await tester.tap(find.text('柱状'));
+    await tester.pumpAndSettle();
+    expect(chart().style, TokenChartStyle.bar);
+    expect(find.text('输入'), findsOneWidget);
+    expect(find.text('输出'), findsOneWidget);
+
+    await tester.tap(find.text('30 天'));
+    await tester.pumpAndSettle();
+    expect(chart().days, hasLength(30));
+    expect(find.text('最近 30 天'), findsOneWidget);
   });
 
   testWidgets('provider list summarises usage and links to the usage page',

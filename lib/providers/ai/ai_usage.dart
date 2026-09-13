@@ -117,9 +117,61 @@ bool _isCjk(int unit) =>
 bool _isWhitespace(int unit) =>
     unit == 0x20 || unit == 0x09 || unit == 0x0A || unit == 0x0D;
 
+/// 某一天的用量。
+@immutable
+class AiDayUsage {
+  final int promptTokens;
+  final int completionTokens;
+  final int requests;
+
+  const AiDayUsage({
+    this.promptTokens = 0,
+    this.completionTokens = 0,
+    this.requests = 0,
+  });
+
+  static const empty = AiDayUsage();
+
+  int get totalTokens => promptTokens + completionTokens;
+
+  AiDayUsage add(AIUsage usage) => AiDayUsage(
+        promptTokens: promptTokens + usage.promptTokens,
+        completionTokens: completionTokens + usage.completionTokens,
+        requests: requests + 1,
+      );
+
+  AiDayUsage plus(AiDayUsage other) => AiDayUsage(
+        promptTokens: promptTokens + other.promptTokens,
+        completionTokens: completionTokens + other.completionTokens,
+        requests: requests + other.requests,
+      );
+
+  List<int> toJson() => [promptTokens, completionTokens, requests];
+
+  static AiDayUsage fromJson(Object? json) {
+    if (json is! List || json.length < 3) return empty;
+    int at(int i) {
+      final v = json[i];
+      return v is num ? v.toInt() : 0;
+    }
+
+    return AiDayUsage(
+      promptTokens: at(0),
+      completionTokens: at(1),
+      requests: at(2),
+    );
+  }
+}
+
 /// 一个 Provider 的累计用量。
+///
+/// 累计数单独存，不从 [days] 加总：按天的记录只保留最近 [keptDays] 天，
+/// 累计数要一直往上加。
 @immutable
 class AiProviderUsage {
+  /// 按天记录保留多少天。图表最多看 30 天，多留一倍余量。
+  static const keptDays = 60;
+
   final int promptTokens;
   final int completionTokens;
   final int requests;
@@ -127,11 +179,11 @@ class AiProviderUsage {
   /// 其中按字数估算（API 没返回 usage）的请求数。
   final int estimatedRequests;
 
-  /// 「今日」这一栏：[todayKey] 是 yyyy-MM-dd，换天就清零。
+  /// 按天的用量，键是 yyyy-MM-dd。
+  final Map<String, AiDayUsage> days;
+
+  /// 「今日」是哪一天。由 [forDay] 设定，读今日数字前要先经过它。
   final String? todayKey;
-  final int todayPromptTokens;
-  final int todayCompletionTokens;
-  final int todayRequests;
 
   /// 开始统计的时间（第一次记录或上次清零）。
   final DateTime? since;
@@ -141,57 +193,75 @@ class AiProviderUsage {
     this.completionTokens = 0,
     this.requests = 0,
     this.estimatedRequests = 0,
+    this.days = const {},
     this.todayKey,
-    this.todayPromptTokens = 0,
-    this.todayCompletionTokens = 0,
-    this.todayRequests = 0,
     this.since,
   });
 
   static const empty = AiProviderUsage();
 
   int get totalTokens => promptTokens + completionTokens;
-  int get todayTotalTokens => todayPromptTokens + todayCompletionTokens;
   bool get isEmpty => requests == 0;
 
-  /// 今日的数字只在 [dayKey] 还是同一天时有效。
+  AiDayUsage get today => days[todayKey] ?? AiDayUsage.empty;
+  int get todayPromptTokens => today.promptTokens;
+  int get todayCompletionTokens => today.completionTokens;
+  int get todayRequests => today.requests;
+  int get todayTotalTokens => today.totalTokens;
+
+  /// 把「今日」对到 [dayKey]。
   AiProviderUsage forDay(String dayKey) {
     if (todayKey == dayKey) return this;
-    return AiProviderUsage(
-      promptTokens: promptTokens,
-      completionTokens: completionTokens,
-      requests: requests,
-      estimatedRequests: estimatedRequests,
-      todayKey: dayKey,
-      since: since,
-    );
+    return _copyWith(todayKey: dayKey);
   }
 
   AiProviderUsage add(AIUsage usage, {required String dayKey, DateTime? now}) {
-    final today = forDay(dayKey);
-    return AiProviderUsage(
-      promptTokens: today.promptTokens + usage.promptTokens,
-      completionTokens: today.completionTokens + usage.completionTokens,
-      requests: today.requests + 1,
-      estimatedRequests: today.estimatedRequests + (usage.estimated ? 1 : 0),
+    final nextDays = Map<String, AiDayUsage>.of(days);
+    nextDays[dayKey] = (nextDays[dayKey] ?? AiDayUsage.empty).add(usage);
+    return _copyWith(
+      promptTokens: promptTokens + usage.promptTokens,
+      completionTokens: completionTokens + usage.completionTokens,
+      requests: requests + 1,
+      estimatedRequests: estimatedRequests + (usage.estimated ? 1 : 0),
+      days: _prune(nextDays),
       todayKey: dayKey,
-      todayPromptTokens: today.todayPromptTokens + usage.promptTokens,
-      todayCompletionTokens:
-          today.todayCompletionTokens + usage.completionTokens,
-      todayRequests: today.todayRequests + 1,
-      since: today.since ?? now,
+      since: since ?? now,
     );
   }
+
+  /// 只留最近 [keptDays] 天。键是 yyyy-MM-dd，字符串顺序就是日期顺序。
+  static Map<String, AiDayUsage> _prune(Map<String, AiDayUsage> days) {
+    if (days.length <= keptDays) return days;
+    final keys = days.keys.toList()..sort();
+    final kept = keys.sublist(keys.length - keptDays);
+    return {for (final key in kept) key: days[key]!};
+  }
+
+  AiProviderUsage _copyWith({
+    int? promptTokens,
+    int? completionTokens,
+    int? requests,
+    int? estimatedRequests,
+    Map<String, AiDayUsage>? days,
+    String? todayKey,
+    DateTime? since,
+  }) =>
+      AiProviderUsage(
+        promptTokens: promptTokens ?? this.promptTokens,
+        completionTokens: completionTokens ?? this.completionTokens,
+        requests: requests ?? this.requests,
+        estimatedRequests: estimatedRequests ?? this.estimatedRequests,
+        days: days ?? this.days,
+        todayKey: todayKey ?? this.todayKey,
+        since: since ?? this.since,
+      );
 
   Map<String, Object?> toJson() => {
         'prompt': promptTokens,
         'completion': completionTokens,
         'requests': requests,
         'estimatedRequests': estimatedRequests,
-        'todayKey': todayKey,
-        'todayPrompt': todayPromptTokens,
-        'todayCompletion': todayCompletionTokens,
-        'todayRequests': todayRequests,
+        'days': {for (final e in days.entries) e.key: e.value.toJson()},
         'since': since?.toIso8601String(),
       };
 
@@ -201,19 +271,42 @@ class AiProviderUsage {
       return value is num ? value.toInt() : 0;
     }
 
+    final days = <String, AiDayUsage>{};
+    final rawDays = json['days'];
+    if (rawDays is Map) {
+      for (final entry in rawDays.entries) {
+        days[entry.key.toString()] = AiDayUsage.fromJson(entry.value);
+      }
+    } else {
+      // 老格式（v1.0.0 之后短暂用过）：今日数字平铺在顶层。
+      final todayKey = json['todayKey'];
+      if (todayKey is String && readInt('todayRequests') > 0) {
+        days[todayKey] = AiDayUsage(
+          promptTokens: readInt('todayPrompt'),
+          completionTokens: readInt('todayCompletion'),
+          requests: readInt('todayRequests'),
+        );
+      }
+    }
     final since = json['since'];
     return AiProviderUsage(
       promptTokens: readInt('prompt'),
       completionTokens: readInt('completion'),
       requests: readInt('requests'),
       estimatedRequests: readInt('estimatedRequests'),
-      todayKey: json['todayKey'] as String?,
-      todayPromptTokens: readInt('todayPrompt'),
-      todayCompletionTokens: readInt('todayCompletion'),
-      todayRequests: readInt('todayRequests'),
+      days: days,
       since: since is String ? DateTime.tryParse(since) : null,
     );
   }
+}
+
+/// 图表用的一天：日期 + 当天用量（可以是多个 Provider 加总）。
+@immutable
+class AiUsageDay {
+  final DateTime date;
+  final AiDayUsage usage;
+
+  const AiUsageDay({required this.date, required this.usage});
 }
 
 /// 按 Provider 累计 token 用量，存在偏好里（一个 JSON 串）。
@@ -237,6 +330,29 @@ class AiUsageTracker extends ChangeNotifier implements AIUsageSink {
   /// 某个 Provider 的用量，「今日」按当天折算。没记录过返回空值。
   AiProviderUsage usageFor(int providerId) =>
       (_byProvider[providerId] ?? AiProviderUsage.empty).forDay(_dayKey());
+
+  /// 最近 [days] 天每天的用量（含今天），没记录的天是 0。[providerId] 为空
+  /// 时把所有 Provider 加在一起。
+  List<AiUsageDay> dailySeries({int days = 14, int? providerId}) {
+    final now = _now();
+    final todayStart = DateTime(now.year, now.month, now.day);
+    final sources = providerId == null
+        ? _byProvider.values
+        : [if (_byProvider[providerId] != null) _byProvider[providerId]!];
+    return [
+      for (var offset = days - 1; offset >= 0; offset--)
+        () {
+          final date = todayStart.subtract(Duration(days: offset));
+          final key = _dayKey(date);
+          var usage = AiDayUsage.empty;
+          for (final source in sources) {
+            final day = source.days[key];
+            if (day != null) usage = usage.plus(day);
+          }
+          return AiUsageDay(date: date, usage: usage);
+        }(),
+    ];
+  }
 
   @override
   void record(int providerId, AIUsage usage) {

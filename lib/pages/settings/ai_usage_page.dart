@@ -6,17 +6,26 @@ import '../../providers/ai/ai_usage.dart';
 import '../../providers/database_provider.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/glass_container.dart';
+import '../../widgets/token_usage_chart.dart';
 import 'ai_provider_list.dart';
 
 /// 各 Provider 的 token 用量：今日 / 累计，输入 / 输出。
 ///
 /// 只是个计数器，不是账单：服务端返回了 usage 才是准确值，没返回的按字数
 /// 估，估过的请求数单独标出来。价格各家各模型都不一样，这里不折算成钱。
-class AiUsagePage extends ConsumerWidget {
+class AiUsagePage extends ConsumerStatefulWidget {
   const AiUsagePage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AiUsagePage> createState() => _AiUsagePageState();
+}
+
+class _AiUsagePageState extends ConsumerState<AiUsagePage> {
+  TokenChartStyle _chartStyle = TokenChartStyle.line;
+  int _chartDays = 14;
+
+  @override
+  Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final tracker = ref.watch(aiUsageTrackerProvider);
     final providersAsync = ref.watch(allAiProvidersProvider);
@@ -96,6 +105,13 @@ class AiUsagePage extends ConsumerWidget {
                   ],
                 ),
               ),
+              _ChartCard(
+                days: tracker.dailySeries(days: _chartDays),
+                style: _chartStyle,
+                range: _chartDays,
+                onStyleChanged: (style) => setState(() => _chartStyle = style),
+                onRangeChanged: (days) => setState(() => _chartDays = days),
+              ),
               if (rows.isEmpty)
                 const GlassContainer.stable(
                   padding: EdgeInsets.symmetric(
@@ -153,6 +169,129 @@ class AiUsagePage extends ConsumerWidget {
       ),
     );
     if (confirmed == true) reset();
+  }
+}
+
+/// 最近 N 天的用量图：折线看趋势，柱状看输入 / 输出各占多少。
+class _ChartCard extends StatelessWidget {
+  final List<AiUsageDay> days;
+  final TokenChartStyle style;
+  final int range;
+  final ValueChanged<TokenChartStyle> onStyleChanged;
+  final ValueChanged<int> onRangeChanged;
+
+  const _ChartCard({
+    required this.days,
+    required this.style,
+    required this.range,
+    required this.onStyleChanged,
+    required this.onRangeChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final hasData = days.any((d) => d.usage.totalTokens > 0);
+    return GlassContainer.stable(
+      padding: const EdgeInsets.all(20),
+      margin: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text('最近 $range 天', style: theme.textTheme.titleSmall),
+              ),
+              SegmentedButton<int>(
+                key: const Key('ai-usage-chart-range'),
+                showSelectedIcon: false,
+                style: const ButtonStyle(
+                  visualDensity: VisualDensity.compact,
+                ),
+                segments: const [
+                  ButtonSegment(value: 7, label: Text('7 天')),
+                  ButtonSegment(value: 14, label: Text('14 天')),
+                  ButtonSegment(value: 30, label: Text('30 天')),
+                ],
+                selected: {range},
+                onSelectionChanged: (s) => onRangeChanged(s.first),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              SegmentedButton<TokenChartStyle>(
+                key: const Key('ai-usage-chart-style'),
+                showSelectedIcon: false,
+                style: const ButtonStyle(
+                  visualDensity: VisualDensity.compact,
+                ),
+                segments: const [
+                  ButtonSegment(
+                    value: TokenChartStyle.line,
+                    label: Text('折线'),
+                    icon: Icon(Icons.show_chart, size: 16),
+                  ),
+                  ButtonSegment(
+                    value: TokenChartStyle.bar,
+                    label: Text('柱状'),
+                    icon: Icon(Icons.bar_chart, size: 16),
+                  ),
+                ],
+                selected: {style},
+                onSelectionChanged: (s) => onStyleChanged(s.first),
+              ),
+              const Spacer(),
+              if (style == TokenChartStyle.bar) ...[
+                _LegendDot(color: scheme.primary, label: '输入'),
+                const SizedBox(width: 10),
+                _LegendDot(color: scheme.tertiary, label: '输出'),
+              ] else
+                _LegendDot(color: scheme.primary, label: '每天总量'),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (hasData)
+            TokenUsageChart(days: days, style: style)
+          else
+            SizedBox(
+              height: 180,
+              child: Center(
+                child: Text(
+                  '最近 $range 天没有用量',
+                  style: theme.textTheme.bodySmall,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LegendDot extends StatelessWidget {
+  final Color color;
+  final String label;
+
+  const _LegendDot({required this.color, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 4),
+        Text(label, style: Theme.of(context).textTheme.labelSmall),
+      ],
+    );
   }
 }
 
