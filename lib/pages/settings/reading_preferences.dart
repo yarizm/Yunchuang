@@ -283,8 +283,7 @@ class ReadingPreferencesPage extends ConsumerWidget {
                             Text('阅读时横屏', style: theme.textTheme.titleSmall),
                             const SizedBox(height: 4),
                             Text(
-                              '进入阅读器自动转成横屏，退出后恢复上面的设置；'
-                              '分页模式下横屏会左右两页并排',
+                              '进入阅读器自动转成横屏，退出后恢复上面的设置',
                               style: theme.textTheme.bodySmall,
                             ),
                           ],

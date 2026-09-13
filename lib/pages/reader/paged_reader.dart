@@ -12,10 +12,6 @@ import 'format_reader.dart';
 import 'paragraph_layout.dart';
 
 class PagedReader extends FormatReader {
-  /// 横屏双页：宽大于高、且宽到能放下两栏正文时，一个视图并排两页。
-  static bool spreadFits(double width, double height) =>
-      width > height && width >= 560;
-
   final String content;
   final double fontSize;
   final double lineHeight;
@@ -116,14 +112,7 @@ class _PagedReaderState extends State<PagedReader> {
 
   late PageController _pageController;
   List<int> _pageOffsets = [];
-
-  /// 当前视图里第一页的页码。`_pageOffsets` 按单栏页码存，PageView 的下标是
-  /// 「视图」——横屏双页时一个视图放两页，见 [_viewForPage]。
   int _currentPage = 0;
-
-  /// 一个视图里放几页：横屏（宽大于高且够宽）分页阅读时并排两页，像翻开的
-  /// 书；不然一整行几十个字读起来很累。
-  int _pagesPerView = 1;
   double _pageHeight = 0;
   double _pageWidth = 0;
   double _lastPageTopPadding = -1;
@@ -155,18 +144,9 @@ class _PagedReaderState extends State<PagedReader> {
     if (_pageOffsets.isEmpty) return;
     final page = _pageForPosition(pos);
     if (_pageController.hasClients) {
-      _pageController.jumpToPage(_viewForPage(page));
+      _pageController.jumpToPage(page);
     }
   }
-
-  int _viewForPage(int page) => page ~/ _pagesPerView;
-
-  int _firstPageOfView(int view) => view * _pagesPerView;
-
-  int get _viewCount =>
-      (_pageOffsets.length + _pagesPerView - 1) ~/ _pagesPerView;
-
-  static const double _spreadGutter = 32;
 
   Stream<TextSelectionData> get onSelection => const Stream.empty();
 
@@ -265,7 +245,7 @@ class _PagedReaderState extends State<PagedReader> {
       setState(() {});
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _pageController.hasClients) {
-          _pageController.jumpToPage(_viewForPage(startPage));
+          _pageController.jumpToPage(startPage);
           _jumpToActiveSentencePage();
         }
       });
@@ -475,10 +455,10 @@ class _PagedReaderState extends State<PagedReader> {
     final targetPage = _pageForPosition(
       sentence.startOffset / widget.content.length,
     );
-    if (_viewForPage(targetPage) == _viewForPage(_currentPage)) return;
+    if (targetPage == _currentPage) return;
     unawaited(
       _pageController.animateToPage(
-        _viewForPage(targetPage),
+        targetPage,
         duration: const Duration(milliseconds: 220),
         curve: Curves.easeOutCubic,
       ),
@@ -516,10 +496,10 @@ class _PagedReaderState extends State<PagedReader> {
     } else if (oldWidget.initialPosition != widget.initialPosition &&
         _pageOffsets.isNotEmpty) {
       final targetPage = _pageForPosition(widget.initialPosition);
-      if (_viewForPage(targetPage) != _viewForPage(_currentPage)) {
+      if (targetPage != _currentPage) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted || !_pageController.hasClients) return;
-          _pageController.jumpToPage(_viewForPage(targetPage));
+          _pageController.jumpToPage(targetPage);
         });
       }
     }
@@ -557,7 +537,7 @@ class _PagedReaderState extends State<PagedReader> {
   }
 
   bool _requestAdvanceBeyondLast() {
-    if (_viewForPage(_currentPage) < _viewCount - 1 ||
+    if (_currentPage < _pageOffsets.length - 1 ||
         widget.onAdvanceBeyondLast == null) {
       return false;
     }
@@ -612,32 +592,6 @@ class _PagedReaderState extends State<PagedReader> {
     } else if (isBackwardDrag) {
       _requestRetreatBeforeFirst();
     }
-  }
-
-  /// 一个视图：单页就是那一页，双页是左右并排的两页（最后一个视图可能
-  /// 只有左页）。
-  Widget _buildView(int view, int pageCount) {
-    if (_pagesPerView == 1) return _buildPage(view, pageCount);
-    final left = _firstPageOfView(view);
-    final right = left + 1;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(child: _buildPage(left, pageCount)),
-        const SizedBox(width: _spreadGutter),
-        Expanded(
-          child: right < pageCount
-              ? _buildPage(right, pageCount)
-              : const SizedBox.shrink(),
-        ),
-      ],
-    );
-  }
-
-  String _pageIndicatorLabel(int pageCount) {
-    if (_pagesPerView == 1) return '${_currentPage + 1} / $pageCount';
-    final last = math.min(_currentPage + _pagesPerView, pageCount);
-    return '${_currentPage + 1}-$last / $pageCount';
   }
 
   Widget _buildPage(int index, int pageCount) {
@@ -799,7 +753,7 @@ class _PagedReaderState extends State<PagedReader> {
         animation: _pageController,
         child: child,
         builder: (context, child) {
-          var page = _viewForPage(_currentPage).toDouble();
+          var page = _currentPage.toDouble();
           if (_pageController.hasClients && _pageController.page != null) {
             page = _pageController.page!;
           }
@@ -840,7 +794,7 @@ class _PagedReaderState extends State<PagedReader> {
       animation: _pageController,
       child: child,
       builder: (context, child) {
-        var page = _viewForPage(_currentPage).toDouble();
+        var page = _currentPage.toDouble();
         if (_pageController.hasClients && _pageController.page != null) {
           page = _pageController.page!;
         }
@@ -873,13 +827,9 @@ class _PagedReaderState extends State<PagedReader> {
             ? constraints.maxHeight
             : mediaSize.height;
         final pageHeight = math.max(1.0, height - _pageIndicatorReserve);
-        // 双页时按单栏宽度分页；两栏之间留一道书脊。
-        final spread = PagedReader.spreadFits(width, height);
-        _pagesPerView = spread ? 2 : 1;
-        final columnWidth = spread ? (width - _spreadGutter) / 2 : width;
 
-        if (_needsPageCompute(columnWidth, pageHeight)) {
-          _scheduleComputePages(columnWidth, pageHeight);
+        if (_needsPageCompute(width, pageHeight)) {
+          _scheduleComputePages(width, pageHeight);
         }
 
         if (_pageOffsets.isEmpty) {
@@ -887,7 +837,6 @@ class _PagedReaderState extends State<PagedReader> {
         }
 
         final pageCount = _pageOffsets.length;
-        final viewCount = _viewCount;
         return Column(
           children: [
             SizedBox(
@@ -901,11 +850,10 @@ class _PagedReaderState extends State<PagedReader> {
                   onNotification: _handleScrollNotification,
                   child: PageView.builder(
                     controller: _pageController,
-                    itemCount: viewCount,
+                    itemCount: pageCount,
                     scrollDirection: Axis.horizontal,
                     physics: const PageScrollPhysics(),
-                    onPageChanged: (view) {
-                      final page = _firstPageOfView(view);
+                    onPageChanged: (page) {
                       if (mounted) {
                         setState(() => _currentPage = page);
                       } else {
@@ -914,10 +862,10 @@ class _PagedReaderState extends State<PagedReader> {
                       widget.onPageChanged?.call(page);
                       widget.onPositionChanged?.call(_positionForPage(page));
                     },
-                    itemBuilder: (context, view) {
+                    itemBuilder: (context, index) {
                       return _wrapPageTurnEffect(
-                        view,
-                        _buildView(view, pageCount),
+                        index,
+                        _buildPage(index, pageCount),
                       );
                     },
                   ),
@@ -929,7 +877,7 @@ class _PagedReaderState extends State<PagedReader> {
               child: Center(
                 child: pageCount > 1
                     ? Text(
-                        _pageIndicatorLabel(pageCount),
+                        '${_currentPage + 1} / $pageCount',
                         style: TextStyle(
                           fontSize: 12,
                           color: Theme.of(context)
