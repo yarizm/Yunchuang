@@ -1,7 +1,7 @@
 name: yunchuang
 description: 芸窗 - 本地阅读器，支持 EPUB/PDF/TXT，含笔记、词典、TTS 与 AI 助手
 publish_to: 'none'
-version: 1.0.0+2026091101
+version: 1.0.1+2026091301
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
