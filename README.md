@@ -1,21 +1,52 @@
-# <img src="tool/icon.png" width="40" align="top" alt="" /> 芸窗 Yunchuang
+<div align="center">
 
-本地阅读器。读 EPUB / PDF / TXT，做笔记，划词查词典、记生词、翻译，听 TTS，问 AI。数据存在本机，除 AI 与翻译外不联网。
+<img src="tool/icon.png" width="96" alt="芸窗 Yunchuang" />
 
-Android · Windows · MIT
+# 芸窗 Yunchuang
 
-> 芸香草能防蠹，古人拿它护书；芸窗是书斋的雅称。
+**离线优先的 EPUB / PDF / TXT 阅读器**
+
+笔记 · 词典 · TTS · 全文搜索 · 防剧透 AI 助手
+
+[![Release](https://img.shields.io/github/v/release/yarizm/Yunchuang)](https://github.com/yarizm/Yunchuang/releases)
+[![License](https://img.shields.io/github/license/yarizm/Yunchuang)](LICENSE)
+[![Flutter](https://img.shields.io/badge/Flutter-3.x-02569B?logo=flutter)](https://flutter.dev/)
+[![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Windows-lightgrey)](https://github.com/yarizm/Yunchuang/releases)
+
+[下载最新版](https://github.com/yarizm/Yunchuang/releases/latest) · [功能介绍](#功能) · [开发说明](#开发)
+
+</div>
+
+---
+
+> 芸窗是一款本地数据优先的个人阅读器。支持 EPUB、PDF、TXT 阅读，并集成笔记、离线词典、生词本、TTS、全文搜索与 AI 阅读助手。
+> 除 AI 与翻译功能外，核心阅读功能均可离线使用，书籍、笔记和阅读数据默认保存在本机。
+
+<p align="center">
+  <img src="screenshots/shelf.png" width="30%" />
+  <img src="screenshots/reader.png" width="30%" />
+  <img src="screenshots/ai-chat.png" width="30%" />
+</p>
+
+### 为什么是芸窗？
+
+* **本地优先** —— 书籍、笔记、阅读记录默认保存在本机，不依赖云服务
+* **完整阅读体验** —— EPUB / PDF / TXT、排版、搜索、笔记、词典、生词本与 TTS
+* **防剧透 AI** —— AI 默认只能访问当前阅读位置之前的内容，限制在工具执行层生效
+* **开放模型接入** —— 支持 OpenAI 兼容接口、Claude、Gemini、DeepSeek、Ollama、Dify 等服务
+
+> 芸香草能防蠹，古人常用来护书；「芸窗」亦是书斋的雅称。
 
 ## 下载
 
-[Releases](https://github.com/yarizm/Yunchuang/releases) 提供两种包：
+| 平台      | 文件                                     | 要求                    |
+| ------- | -------------------------------------- | --------------------- |
+| Android | `yunchuang-<版本>-android-arm64-v8a.apk` | Android 7.0+，64 位 ARM |
+| Windows | `yunchuang-<版本>-windows-x64.zip`       | Windows 10+           |
 
-| 平台 | 文件 | 要求 |
-|------|------|------|
-| Android | `yunchuang-<版本>-android-arm64-v8a.apk` | 64 位 ARM 设备，Android 7.0+ |
-| Windows | `yunchuang-<版本>-windows-x64.zip` | Windows 10+，解压后运行 `yunchuang.exe` |
+👉 [前往 Releases 下载](https://github.com/yarizm/Yunchuang/releases/latest)
 
-截图里的示例书目来自 [Project Gutenberg](https://www.gutenberg.org/)，均为公有领域作品；AI 回答用的是本地假服务，只为展示界面。
+---
 
 ## 书架
 
