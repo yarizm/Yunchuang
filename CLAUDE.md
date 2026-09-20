@@ -52,11 +52,13 @@ Database (SQLite via Drift ORM + FTS5 全文搜索)
 
 - `ReaderController`（`ChangeNotifier`，非 Riverpod provider）— 阅读器中心状态：当前章节索引、滚动位置、阅读时长计时器、TTS 高亮句索引。`bookProgress` getter 综合章节索引与章内滚动比例，供书架进度条与持久化百分比共用。
   - **性能设计**：滚动位置额外通过 `scrollPositionListenable`（`ValueNotifier`）暴露，高频滚动更新走 ValueNotifier 而非 `notifyListeners()`，避免大范围重建。改动此处需同步检查 `test/pages/reader_performance_test.dart`。
-- `FormatReader` 抽象 + `ReadingMode` 枚举（`scroll` / `page`）— 两种阅读模式。`paged_reader.dart` 实现分页渲染，`paragraph_layout.dart` 负责段落排版计算。
+- `FormatReader` 抽象 + `ReadingMode` 枚举（`scroll` / `page`）— 两种阅读模式。`paged_reader.dart` 实现分页渲染与仿真书脊翻页，`paragraph_layout.dart` 负责段落排版计算。
 - 三个格式 Reader：`txt_reader`、`epub_reader`（flutter_html）、`pdf_reader`（SyncfusionPdfViewer，用 `GlobalKey<PdfReaderState>` 暴露跳页 API）。
 - `ImmersiveReaderShell`、`ReaderToolbar`、`QuickSettingsPanel`、`TtsControlPanel` — 沉浸式 UI 层，通过 `GlassPageRoute` 推入。
 - `ReaderNavigationHistory` — 章节跳转历史，支持返回上一个阅读位置。
-- `reader_data_loader.dart` / `reader_overlays.dart` / `reader_toc_sheet.dart` — 从 `reader_page.dart` 拆出的数据加载、浮层、目录。
+- `reader_data_loader.dart` / `reader_overlays.dart` / `reader_toc_sheet.dart` — 从 `reader_page.dart` 拆出的数据加载、浮层、目录。目录的全书进度滑杆直接定位长篇章节；章节切换时先加载目标章，再并行预热邻章，避免 AI 面板等待邻章读取。
+
+正文 Reader 只把系统安全区与用户配置的「正文顶部留白」计入内容 inset。沉浸式工具栏是覆盖层，不再把整段工具栏高度注入 `MediaQuery`；否则用户将留白调为 0 时仍会看到一段无法解释的空白。
 
 阅读进度持久化由 `ProgressDao` 负责，章节切换、滚动防抖、退出时保存位置等逻辑在 `reader_page.dart` 中协调。
 
@@ -154,7 +156,7 @@ Drift ORM（`drift` + `sqlite3_flutter_libs`），数据库文件 `reading_offli
 
 **接入模板**（`ai_provider_templates.dart`）：常见服务商的端点、建议模型、拿 Key 的地址，表单里「从模板填入」用。模型名核对于 2026-09，**会过期**——表单的模型框还能「从服务端拉取模型列表」（`AIService.listModels`：OpenAI 兼容的 `GET /models`、Ollama 的 `/api/tags`），这才是长期可靠的路。更新模板时去各家文档核实 id，别凭记忆写。
 
-**token 用量**（`ai_usage.dart`）：三个 Provider 都带 `onUsage` 回调，服务端返回了 usage（OpenAI 的 `usage`、流式要开 `stream_options.include_usage`；Ollama 的 `prompt_eval_count/eval_count`；Dify 的 `metadata.usage`）就报准确值，没有就按字数估（`estimateTokenCount`：中文 0.7 token / 字，其他 4 字符 / token）并标 `estimated`。`AiUsageTracker` 按 Provider 累计今日 / 累计，存在偏好的 `aiUsage` 键里，不进数据库。它通过 `aiUsageTrackerProvider` 把自己接到 `AIService.usageSink` 上，所以 `MainShell.initState` 要读它一下——不在 `aiServiceProvider` 里 watch 它，否则每个用到 AI 的测试都得先准备 SharedPreferences。个别兼容服务不认 `stream_options` 会回 400，`OpenAIProvider` 会去掉重试并记住。
+**token 用量**（`ai_usage.dart`）：三个 Provider 都带 `onUsage` 回调，服务端返回了 usage（OpenAI 的 `usage`、流式要开 `stream_options.include_usage`；Ollama 的 `prompt_eval_count/eval_count`；Dify 的 `metadata.usage`）就报准确值，没有就按字数估（`estimateTokenCount`：中文 0.7 token / 字，其他 4 字符 / token）并标 `estimated`。`AiUsageTracker` 按 Provider 和模型代号累计今日 / 累计，存在偏好的 `aiUsage` 键里，不进数据库；旧格式仍可读取，无法归因的部分在用量页单独展示。它通过 `aiUsageTrackerProvider` 把自己接到 `AIService.usageSink` 上，所以 `MainShell.initState` 要读它一下——不在 `aiServiceProvider` 里 watch 它，否则每个用到 AI 的测试都得先准备 SharedPreferences。个别兼容服务不认 `stream_options` 会回 400，`OpenAIProvider` 会去掉重试并记住。
 
 ### Agent 层
 
@@ -164,10 +166,12 @@ Drift ORM（`drift` + `sqlite3_flutter_libs`），数据库文件 `reading_offli
 - **循环上限**：`maxToolCalls = 3`、`maxInvalidJson = 2`
 - **字符预算**：`maxRequestChars = 80000`，用户 prompt 预算按 `min(48000, max(4000, 80000 - baseChars))` 动态计算；超限时保留开头/中段/结尾并通过 `AgentEvent.status` 告知用户
 - **Skills**（`ai_skills` 表）：通过 `allowedToolsJson` 白名单限制单个 Skill 可用的工具；白名单非法时禁用本轮工具调用并提示
-- **Personas**（`ai_personas` 表）：角色人设注入 system prompt，支持从书籍内容生成角色，生成过程可中断并通过 `CharacterPersonaCheckpointStore` 断点续做
+- **Personas**（`ai_personas` 表）：角色人设注入 system prompt，支持从书籍内容生成角色，生成过程可中断并通过 `CharacterPersonaCheckpointStore` 断点续做；生成后的 Markdown 人格文档可预览、编辑、保存和启用
 - **剧透保护**（`spoiler_protection_provider.dart`）：限制 AI 读取当前阅读进度之后的内容，可按书覆盖全局设置
 
-UI 在 `widgets/ai_chat_panel.dart`（阅读器内嵌）和 `pages/ai/ai_chat_page.dart`。Provider 配置在 `pages/settings/ai_provider_form.dart`，用量在 `ai_usage_page.dart`。
+Agent planner 的工具规划响应仍是一次性 JSON；规划完成后会发起独立的流式最终回答请求，并通过 `AgentEvent.keepAlive` 让 UI 先绘制“正在生成”状态。规划结果为空或兼容服务不发流式 chunk 时，使用规划草稿作为回退，不能把用户留在空回答。
+
+UI 在 `widgets/ai_chat_panel.dart`（阅读器内嵌）和 `pages/ai/ai_chat_page.dart`。Provider 配置在 `pages/settings/ai_provider_form.dart`，用量在 `ai_usage_page.dart`；人格预览与编辑共用 `widgets/ai_chat/persona_editor_dialog.dart`。新增 AI 面板异步任务时，必须用明确的取消入口和 `PopScope(canPop: false)` 防止返回键销毁任务上下文。
 
 ## 主题与背景
 
@@ -204,6 +208,7 @@ UI 在 `widgets/ai_chat_panel.dart`（阅读器内嵌）和 `pages/ai/ai_chat_pa
 | `chat_message.dart` | `ChatMsg`：历史裁剪、重试、未落库标记都挂在它身上 |
 | `source_reference_list.dart` | 回复下方的来源卡片，只吃一组引用和点击回调 |
 | `character_name_dialog.dart` | 生成角色人设前问角色名 |
+| `persona_editor_dialog.dart` | 人格文档预览、编辑与保存草稿 |
 | `ai_markdown_style.dart` | 回复的 Markdown 样式 |
 
 拆出去的都是**不碰面板状态**的部分，因此各自有独立测试（`test/widgets/agent_source_parsing_test.dart`、`attachment_chunking_test.dart`）。面板剩下的是状态机本身：发送循环、会话切换、人设管理、消息持久化——这些缠在 `setState` 和请求 id 上，再拆要先把状态拎出来，不是搬代码能解决的。
