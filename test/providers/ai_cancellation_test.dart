@@ -48,6 +48,17 @@ void main() {
     expect(values, ['部分回答']);
   });
 
+  test('bound stream forwards synchronous empty completion', () async {
+    final cancellation = AIRequestCancellation();
+
+    final values = await cancellation
+        .bindStream(const Stream<String>.empty())
+        .toList()
+        .timeout(const Duration(seconds: 1));
+
+    expect(values, isEmpty);
+  });
+
   test('Dio bridge cancels the underlying request token', () async {
     final cancellation = AIRequestCancellation();
     CancelToken? captured;

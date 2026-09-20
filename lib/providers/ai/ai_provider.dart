@@ -93,54 +93,52 @@ class AIRequestCancellation {
 
   Stream<T> bindStream<T>(Stream<T> source) {
     throwIfCancelled();
-    late final StreamController<T> controller;
-    StreamSubscription<T>? sourceSubscription;
-    void Function()? removeCancelListener;
-    var finished = false;
+    return Stream<T>.multi((controller) {
+      StreamSubscription<T>? sourceSubscription;
+      void Function()? removeCancelListener;
+      var finished = false;
 
-    Future<void> cancelSource() async {
-      final subscription = sourceSubscription;
-      sourceSubscription = null;
-      await subscription?.cancel();
-    }
+      void closeWithError(Object error, StackTrace stackTrace) {
+        if (finished) return;
+        finished = true;
+        removeCancelListener?.call();
+        controller.addErrorSync(error, stackTrace);
+        controller.closeSync();
+      }
 
-    void closeWithError(Object error, StackTrace stackTrace) {
-      if (finished) return;
-      finished = true;
-      removeCancelListener?.call();
-      controller.addError(error, stackTrace);
-      unawaited(cancelSource());
-      unawaited(controller.close());
-    }
-
-    controller = StreamController<T>(
-      onListen: () {
-        sourceSubscription = source.listen(
+      removeCancelListener = addCancelListener(() {
+        closeWithError(
+          AIRequestCancelledException(_reason),
+          StackTrace.current,
+        );
+      });
+      if (!finished) {
+        final subscription = source.listen(
           (value) {
-            if (!finished) controller.add(value);
+            if (!finished) controller.addSync(value);
           },
           onError: closeWithError,
           onDone: () {
             if (finished) return;
             finished = true;
             removeCancelListener?.call();
-            unawaited(controller.close());
+            controller.closeSync();
           },
         );
-        removeCancelListener = addCancelListener(() {
-          closeWithError(
-            AIRequestCancelledException(_reason),
-            StackTrace.current,
-          );
-        });
-      },
-      onCancel: () async {
-        finished = true;
-        removeCancelListener?.call();
-        await cancelSource();
-      },
-    );
-    return controller.stream;
+        sourceSubscription = subscription;
+        if (finished) unawaited(subscription.cancel());
+      }
+
+      controller.onPause = () => sourceSubscription?.pause();
+      controller.onResume = () => sourceSubscription?.resume();
+      controller.onCancel = () async {
+        if (!finished) {
+          finished = true;
+          removeCancelListener?.call();
+        }
+        await sourceSubscription?.cancel();
+      };
+    });
   }
 }
 

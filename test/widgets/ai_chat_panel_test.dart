@@ -206,7 +206,7 @@ void main() {
 
     await tester.enterText(find.byType(TextField), '载入后发送');
     await tester.testTextInput.receiveAction(TextInputAction.send);
-    await tester.pumpAndSettle();
+    await _pumpAsyncWork(tester);
 
     expect(service.appendedRoles, ['user', 'assistant']);
   });
@@ -368,7 +368,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), '写入新会话');
     await tester.testTextInput.receiveAction(TextInputAction.send);
-    await tester.pumpAndSettle();
+    await _pumpAsyncWork(tester);
 
     expect(conversationCreates, 1);
     expect(service.appendedConversationIds, [9, 9]);
@@ -414,7 +414,7 @@ void main() {
 
     await tester.tap(find.byTooltip('停止生成'));
     await provider.cancelled.future.timeout(const Duration(seconds: 1));
-    await tester.pumpAndSettle();
+    await _pumpAsyncWork(tester);
 
     expect(
       find.textContaining('已停止生成', findRichText: true),
@@ -463,7 +463,7 @@ void main() {
 
     await tester.tap(find.byTooltip('停止生成'));
     await provider.cancelled.future.timeout(const Duration(seconds: 1));
-    await tester.pumpAndSettle();
+    await _pumpAsyncWork(tester);
 
     expect(tester.widget<TextField>(input).controller!.text, '生成结束后要发送的问题');
   });
@@ -498,7 +498,7 @@ void main() {
     expect(service.appendedRoles, ['user']);
 
     await tester.tap(find.widgetWithText(TextButton, '重试'));
-    await tester.pumpAndSettle();
+    await _pumpAsyncWork(tester);
 
     expect(find.text('重试成功'), findsOneWidget);
     expect(find.widgetWithText(TextButton, '重试'), findsNothing);
@@ -532,7 +532,7 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await _pumpAsyncWork(tester);
 
     expect(find.text('已收到。'), findsOneWidget);
     expect(find.textContaining('请求失败'), findsNothing);
@@ -577,12 +577,12 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await _pumpAsyncWork(tester);
     expect(find.text('回答未保存'), findsOneWidget);
 
     await tester.enterText(find.byType(TextField), '继续追问');
     await tester.testTextInput.receiveAction(TextInputAction.send);
-    await tester.pumpAndSettle();
+    await _pumpAsyncWork(tester);
 
     expect(provider.calls, 2);
     expect(service.appendedRoles, ['user', 'assistant', 'user', 'assistant']);
@@ -617,7 +617,7 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await _pumpAsyncWork(tester);
 
     await tester.enterText(find.byType(TextField), '不能丢失的追问');
     await tester.testTextInput.receiveAction(TextInputAction.send);
@@ -676,7 +676,7 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await _pumpAsyncWork(tester);
     expect(find.text('回答未保存'), findsOneWidget);
 
     ScaffoldMessenger.of(tester.element(find.byType(AiChatPanel)))
@@ -728,7 +728,7 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await _pumpAsyncWork(tester);
     expect(find.text('回答未保存'), findsOneWidget);
 
     ScaffoldMessenger.of(tester.element(find.byType(AiChatPanel)))
@@ -1000,13 +1000,13 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await _pumpAsyncWork(tester);
 
     expect(find.text('可能包含剧透'), findsOneWidget);
     expect(find.text('本次允许'), findsOneWidget);
 
     await tester.tap(find.text('本次允许'));
-    await tester.pumpAndSettle();
+    await _pumpAsyncWork(tester, turns: 8);
 
     expect(find.textContaining('以下回答包含未读内容'), findsOneWidget);
     expect(find.text('未来章节'), findsOneWidget);
@@ -1080,10 +1080,10 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await _pumpAsyncWork(tester);
 
     await tester.tap(find.text('仅使用已读内容'));
-    await tester.pumpAndSettle();
+    await _pumpAsyncWork(tester);
 
     expect(find.textContaining('未获授权'), findsOneWidget);
     expect(find.text('未来章节'), findsNothing);
@@ -1190,7 +1190,7 @@ void main() {
     }
 
     await tester.pumpWidget(panelFor(firstService));
-    await tester.pumpAndSettle();
+    await _pumpAsyncWork(tester);
 
     final assistantIndex = firstService.appendedRoles.indexOf('assistant');
     expect(assistantIndex, greaterThanOrEqualTo(0));
@@ -1700,7 +1700,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), '删除后新消息');
     await tester.testTextInput.receiveAction(TextInputAction.send);
-    await tester.pumpAndSettle();
+    await _pumpAsyncWork(tester);
 
     expect(conversationCreates, 1);
     expect(service.appendedConversationIds, [9, 9]);
@@ -2218,6 +2218,16 @@ void main() {
   });
 }
 
+Future<void> _pumpAsyncWork(
+  WidgetTester tester, {
+  int turns = 4,
+}) async {
+  for (var i = 0; i < turns; i++) {
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+  }
+  await tester.pumpAndSettle();
+}
+
 class _FakeAIService extends AIService {
   final AIProvider provider;
   final appendedRoles = <String>[];
@@ -2357,7 +2367,7 @@ class _ImmediateProvider implements AIProvider {
 
   @override
   Stream<String> chatStream(String message, {List<ChatMessage>? history}) =>
-      const Stream.empty();
+      _singleChunkStream('已收到。');
 
   @override
   Future<String> complete(String prompt) async => '';
@@ -2384,7 +2394,7 @@ class _RetryProvider implements AIProvider {
 
   @override
   Stream<String> chatStream(String message, {List<ChatMessage>? history}) =>
-      const Stream.empty();
+      _singleChunkStream('重试成功');
 
   @override
   Future<String> complete(String prompt) async => '';
@@ -2397,6 +2407,7 @@ class _ScriptedProvider implements AIProvider {
   final List<String> responses;
   final histories = <List<ChatMessage>?>[];
   final completePrompts = <String>[];
+  String _lastFinalAnswer = '';
 
   _ScriptedProvider(this.responses);
 
@@ -2412,12 +2423,23 @@ class _ScriptedProvider implements AIProvider {
     if (responses.isEmpty) {
       return '{"action":"final","answer":""}';
     }
-    return responses.removeAt(0);
+    final response = responses.removeAt(0);
+    try {
+      final decoded = jsonDecode(response);
+      if (decoded is Map && decoded['action'] == 'final') {
+        _lastFinalAnswer = decoded['answer']?.toString() ?? '';
+      }
+    } catch (_) {
+      // Invalid planner output is intentional in some tests.
+    }
+    return response;
   }
 
   @override
   Stream<String> chatStream(String message, {List<ChatMessage>? history}) =>
-      const Stream.empty();
+      _lastFinalAnswer.isEmpty
+          ? const Stream.empty()
+          : _singleChunkStream(_lastFinalAnswer);
 
   @override
   Future<String> complete(String prompt) async {
@@ -2427,6 +2449,14 @@ class _ScriptedProvider implements AIProvider {
 
   @override
   Future<bool> testConnection() async => true;
+}
+
+Stream<String> _singleChunkStream(String value) {
+  return Stream<String>.multi((controller) {
+    WidgetsBinding.instance.scheduleFrame();
+    controller.addSync(value);
+    controller.closeSync();
+  });
 }
 
 class _CheckpointAssetService extends AIAssetService {

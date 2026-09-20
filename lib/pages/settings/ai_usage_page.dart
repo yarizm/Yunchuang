@@ -74,7 +74,12 @@ class _AiUsagePageState extends ConsumerState<AiUsagePage> {
         data: (providers) {
           final rows = [
             for (final provider in providers)
-              (provider: provider, usage: tracker.usageFor(provider.id)),
+              (
+                provider: provider,
+                usage: tracker.usageFor(provider.id),
+                models: tracker.modelUsagesFor(provider.id),
+                unattributed: tracker.unattributedUsageFor(provider.id),
+              ),
           ];
           final total = rows.fold(0, (sum, row) => sum + row.usage.totalTokens);
           final today = rows.fold(
@@ -129,6 +134,8 @@ class _AiUsagePageState extends ConsumerState<AiUsagePage> {
                   _ProviderUsageCard(
                     provider: row.provider,
                     usage: row.usage,
+                    models: row.models,
+                    unattributed: row.unattributed,
                     onReset: row.usage.isEmpty
                         ? null
                         : () => _confirmReset(
@@ -140,7 +147,7 @@ class _AiUsagePageState extends ConsumerState<AiUsagePage> {
               Text(
                 '数字是 token 数，不是费用。服务端返回了 usage 就记准确值；'
                 '没返回的按字数估：中文约 0.7 token / 字，英文约 4 字符 / token。'
-                '「测试连接」不计入。',
+                '「测试连接」不计入。按模型统计从本版本的新请求开始记录。',
                 style: theme.textTheme.bodySmall,
               ),
             ],
@@ -327,11 +334,15 @@ class _Stat extends StatelessWidget {
 class _ProviderUsageCard extends StatelessWidget {
   final AiProvider provider;
   final AiProviderUsage usage;
+  final List<AiModelUsage> models;
+  final AiProviderUsage unattributed;
   final VoidCallback? onReset;
 
   const _ProviderUsageCard({
     required this.provider,
     required this.usage,
+    required this.models,
+    required this.unattributed,
     required this.onReset,
   });
 
@@ -351,12 +362,7 @@ class _ProviderUsageCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(provider.name, style: theme.textTheme.titleSmall),
-                    Text(
-                      provider.modelName.isEmpty
-                          ? provider.type
-                          : '${provider.type} · ${provider.modelName}',
-                      style: theme.textTheme.bodySmall,
-                    ),
+                    Text(provider.type, style: theme.textTheme.bodySmall),
                   ],
                 ),
               ),
@@ -367,6 +373,34 @@ class _ProviderUsageCard extends StatelessWidget {
                 icon: const Icon(Icons.restart_alt, size: 20),
               ),
             ],
+          ),
+          Container(
+            key: Key('ai-usage-model-code-${provider.id}'),
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerHigh,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('当前模型代号', style: theme.textTheme.labelMedium),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: SelectableText(
+                    provider.modelName.trim().isEmpty
+                        ? '服务端未提供（${provider.type}）'
+                        : provider.modelName.trim(),
+                    textAlign: TextAlign.end,
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      color: theme.colorScheme.primary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: 12),
           if (usage.isEmpty)
@@ -394,6 +428,23 @@ class _ProviderUsageCard extends StatelessWidget {
               ].join(' · '),
               style: theme.textTheme.bodySmall,
             ),
+            const SizedBox(height: 14),
+            Divider(color: theme.colorScheme.outlineVariant),
+            const SizedBox(height: 8),
+            Text('按模型统计', style: theme.textTheme.labelLarge),
+            const SizedBox(height: 8),
+            for (final model in models) ...[
+              _ModelUsageRow(model: model),
+              const SizedBox(height: 6),
+            ],
+            if (!unattributed.isEmpty)
+              _ModelUsageRow(
+                model: AiModelUsage(
+                  modelName: '旧记录（未区分模型）',
+                  usage: unattributed,
+                ),
+                muted: true,
+              ),
           ],
         ],
       ),
@@ -404,6 +455,50 @@ class _ProviderUsageCard extends StatelessWidget {
     final month = time.month.toString().padLeft(2, '0');
     final day = time.day.toString().padLeft(2, '0');
     return '${time.year}-$month-$day';
+  }
+}
+
+class _ModelUsageRow extends StatelessWidget {
+  final AiModelUsage model;
+  final bool muted;
+
+  const _ModelUsageRow({required this.model, this.muted = false});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = muted
+        ? theme.colorScheme.onSurfaceVariant
+        : theme.colorScheme.onSurface;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(
+          alpha: muted ? 0.35 : 0.65,
+        ),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SelectableText(
+            model.modelName,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: color,
+              fontWeight: muted ? FontWeight.w400 : FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            '今日 ≈ ${formatTokenCount(model.usage.todayTotalTokens)}'
+            '  ·  累计 ≈ ${formatTokenCount(model.usage.totalTokens)}'
+            '  ·  ${model.usage.requests} 次',
+            style: theme.textTheme.bodySmall?.copyWith(color: color),
+          ),
+        ],
+      ),
+    );
   }
 }
 

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:drift/drift.dart' show Value;
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -21,6 +22,7 @@ import 'ai_chat/source_reference_list.dart';
 import 'ai_chat/attachment_viewer.dart';
 import 'ai_chat/character_name_dialog.dart';
 import 'ai_chat/chat_message.dart';
+import 'ai_chat/persona_editor_dialog.dart';
 import 'empty_state.dart';
 
 class AiChatPanel extends ConsumerStatefulWidget {
@@ -187,8 +189,8 @@ class _AiChatPanelState extends ConsumerState<AiChatPanel> {
   Future<bool> _ensureProviderConfigured() async {
     final bool hasProvider;
     try {
-      hasProvider = await ref.read(aiServiceProvider).getDefaultProvider() !=
-          null;
+      hasProvider =
+          await ref.read(aiServiceProvider).getDefaultProvider() != null;
     } catch (_) {
       // 查不到就放行，让真正的请求去报错，错误信息更具体。
       return true;
@@ -357,6 +359,7 @@ class _AiChatPanelState extends ConsumerState<AiChatPanel> {
     var assistantAdded = false;
     var retryWithUnreadAccess = false;
     Timer? streamRenderTimer;
+    Timer? answerStartPulseTimer;
 
     void flushStreamBuffer() {
       streamRenderTimer?.cancel();
@@ -432,7 +435,23 @@ class _AiChatPanelState extends ConsumerState<AiChatPanel> {
             cancellation: cancellation,
           )) {
         if (!_isActiveSend(requestId)) return;
-        if (event.type == AgentEventType.status) {
+        if (event.type == AgentEventType.keepAlive) {
+          // Paint the transition from tool planning to the real streaming
+          // answer request even when the provider has not emitted text yet.
+          setState(() {});
+          var remainingPulses = 4;
+          answerStartPulseTimer?.cancel();
+          answerStartPulseTimer = Timer.periodic(
+            const Duration(milliseconds: 16),
+            (timer) {
+              if (!_isActiveSend(requestId) || --remainingPulses <= 0) {
+                timer.cancel();
+              }
+              if (_isActiveSend(requestId)) setState(() {});
+            },
+          );
+          continue;
+        } else if (event.type == AgentEventType.status) {
           if (_requiresUnreadConfirmation(event)) {
             final approved = await _confirmUnreadAccess();
             if (!_isActiveSend(requestId)) return;
@@ -526,6 +545,7 @@ class _AiChatPanelState extends ConsumerState<AiChatPanel> {
       _scrollToBottom();
     } finally {
       streamRenderTimer?.cancel();
+      answerStartPulseTimer?.cancel();
       if (_isActiveSend(requestId)) {
         setState(() {
           _loading = false;
@@ -1082,6 +1102,14 @@ class _AiChatPanelState extends ConsumerState<AiChatPanel> {
                       subtitle: Text(persona.characterName ?? persona.type),
                       selected: _selectedPersona?.id == persona.id,
                       onTap: () => _selectPersona(persona, ctx),
+                      trailing: IconButton(
+                        tooltip: '查看和编辑人格',
+                        icon: const Icon(Icons.edit_outlined, size: 20),
+                        onPressed: () {
+                          Navigator.pop(ctx);
+                          unawaited(_editPersona(persona));
+                        },
+                      ),
                     );
                   },
                 ),
@@ -1205,6 +1233,40 @@ class _AiChatPanelState extends ConsumerState<AiChatPanel> {
     }
   }
 
+  Future<void> _editPersona(
+    AiPersona persona, {
+    bool startInEditMode = false,
+  }) async {
+    final draft = await showPersonaEditorDialog(
+      context,
+      persona: persona,
+      startInEditMode: startInEditMode,
+    );
+    if (draft == null || !mounted) return;
+    try {
+      await ref.read(aiServiceProvider).savePersona(
+            AiPersonasCompanion(
+              name: Value(draft.name),
+              systemPrompt: Value(draft.systemPrompt),
+              documentMarkdown: Value(draft.documentMarkdown),
+              updatedAt: Value(DateTime.now()),
+            ),
+            personaId: persona.id,
+          );
+      if (!mounted) return;
+      await _refreshPersonas();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('人格已保存')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('保存人格失败：${describeAIError(error)}')),
+      );
+    }
+  }
+
   Future<void> _generateCharacterPersona({
     CharacterPersonaGenerationCheckpoint? resumeFrom,
   }) async {
@@ -1306,81 +1368,76 @@ class _AiChatPanelState extends ConsumerState<AiChatPanel> {
       builder: (ctx) {
         progressContext = ctx;
         if (!dialogReady.isCompleted) dialogReady.complete();
-        return AlertDialog(
-          title: const Text('生成角色人格'),
-          content: ValueListenableBuilder<String>(
-            valueListenable: progress,
-            builder: (context, value, _) => Text(value),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                cancelled = true;
-                generationCancellation.cancel('已取消角色人格生成。');
-                progress.value = '正在取消...';
-              },
-              child: const Text('取消'),
+        return PopScope<void>(
+          // Android 返回键原本会直接把进度框弹掉，再按一次就
+          // 销毁 AI 面板并触发 dispose 中的取消。长任务只能通过
+          // 明确的“取消”按钮中断，避免误操作丢掉最后一步。
+          canPop: false,
+          child: AlertDialog(
+            title: const Text('生成角色人格'),
+            content: ValueListenableBuilder<String>(
+              valueListenable: progress,
+              builder: (context, value, _) => Text(value),
             ),
-          ],
+            actions: [
+              TextButton(
+                onPressed: () {
+                  cancelled = true;
+                  generationCancellation.cancel('已取消角色人格生成。');
+                  progress.value = '正在取消...';
+                },
+                child: const Text('取消'),
+              ),
+            ],
+          ),
         );
       },
     );
     await dialogReady.future;
 
+    AiPersona? generatedPersona;
+    var generationSucceeded = false;
+    String? terminalMessage;
+    SnackBarAction? terminalAction;
     try {
-      await ref.read(aiAssetServiceProvider).generateCharacterPersona(
-            bookId: _agentContext.bookId!,
-            characterName: characterName,
-            onProgress: (status) => progress.value = status,
-            shouldCancel: () => cancelled,
-            cancellation: generationCancellation,
-            estimate: estimate,
-            resumeFrom: resumeFrom,
-            onCheckpoint: (checkpoint) {
-              latestCheckpoint = checkpoint;
-              _characterPersonaCheckpoint = checkpoint;
-            },
-          );
+      final personaId =
+          await ref.read(aiAssetServiceProvider).generateCharacterPersona(
+                bookId: _agentContext.bookId!,
+                characterName: characterName,
+                onProgress: (status) => progress.value = status,
+                shouldCancel: () => cancelled,
+                cancellation: generationCancellation,
+                estimate: estimate,
+                resumeFrom: resumeFrom,
+                onCheckpoint: (checkpoint) {
+                  latestCheckpoint = checkpoint;
+                  _characterPersonaCheckpoint = checkpoint;
+                },
+              );
+      generationSucceeded = true;
       _characterPersonaCheckpoint = null;
       try {
         await _refreshPersonas();
       } catch (error) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              '角色人格已生成，但刷新列表失败：${describeAIError(error)}',
-            ),
-          ),
-        );
-        return;
+        terminalMessage = '角色人格已生成，但刷新列表失败：${describeAIError(error)}';
       }
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('角色人格已生成')),
-      );
+      generatedPersona = _findPersona(_personas, personaId);
     } on AIAssetCancelledException {
-      if (!mounted) return;
-      setState(() {
-        _characterPersonaCheckpoint = latestCheckpoint;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('已取消角色人格生成，可稍后从检查点继续'),
-          action: _resumeGenerationAction(latestCheckpoint),
-        ),
-      );
+      if (mounted) {
+        setState(() {
+          _characterPersonaCheckpoint = latestCheckpoint;
+        });
+      }
+      terminalMessage = '已取消角色人格生成，可稍后从检查点继续';
+      terminalAction = _resumeGenerationAction(latestCheckpoint);
     } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _characterPersonaCheckpoint = latestCheckpoint;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('生成失败：$error'),
-          action: _resumeGenerationAction(latestCheckpoint),
-        ),
-      );
+      if (mounted) {
+        setState(() {
+          _characterPersonaCheckpoint = latestCheckpoint;
+        });
+      }
+      terminalMessage = '生成失败：${describeAIError(error)}';
+      terminalAction = _resumeGenerationAction(latestCheckpoint);
     } finally {
       if (identical(_activePersonaCancellation, generationCancellation)) {
         _activePersonaCancellation = null;
@@ -1391,6 +1448,19 @@ class _AiChatPanelState extends ConsumerState<AiChatPanel> {
       }
       await progressDialog;
       progress.dispose();
+    }
+    if (!mounted) return;
+    if (terminalMessage != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(terminalMessage), action: terminalAction),
+      );
+      return;
+    }
+    if (generationSucceeded) {
+      await _showGeneratedPersonaSuccess(
+        generatedPersona,
+        fallbackName: '$characterName 人格',
+      );
     }
   }
 
@@ -1415,21 +1485,24 @@ class _AiChatPanelState extends ConsumerState<AiChatPanel> {
       builder: (ctx) {
         progressContext = ctx;
         if (!dialogReady.isCompleted) dialogReady.complete();
-        return AlertDialog(
-          title: const Text('准备 PDF 正文'),
-          content: ValueListenableBuilder<String>(
-            valueListenable: progress,
-            builder: (context, value, _) => Text(value),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                cancellation.cancel('已取消 PDF 正文准备。');
-                progress.value = '正在取消...';
-              },
-              child: const Text('取消'),
+        return PopScope<void>(
+          canPop: false,
+          child: AlertDialog(
+            title: const Text('准备 PDF 正文'),
+            content: ValueListenableBuilder<String>(
+              valueListenable: progress,
+              builder: (context, value, _) => Text(value),
             ),
-          ],
+            actions: [
+              TextButton(
+                onPressed: () {
+                  cancellation.cancel('已取消 PDF 正文准备。');
+                  progress.value = '正在取消...';
+                },
+                child: const Text('取消'),
+              ),
+            ],
+          ),
         );
       },
     );
@@ -1472,6 +1545,90 @@ class _AiChatPanelState extends ConsumerState<AiChatPanel> {
   String _formatCharacterCount(int count) {
     if (count < 10000) return '$count 字正文';
     return '${(count / 10000).toStringAsFixed(1)} 万字正文';
+  }
+
+  Future<void> _showGeneratedPersonaSuccess(
+    AiPersona? persona, {
+    required String fallbackName,
+  }) async {
+    final action = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        final theme = Theme.of(dialogContext);
+        return AlertDialog(
+          icon: Icon(
+            Icons.check_circle_rounded,
+            size: 52,
+            color: theme.colorScheme.primary,
+          ),
+          title: const Text('角色人格已生成'),
+          content: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primaryContainer.withValues(alpha: 0.72),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.theater_comedy_rounded),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        persona?.name ?? fallbackName,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      const Text('已保存，可立即查看、编辑或启用'),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('稍后再说'),
+            ),
+            if (persona != null) ...[
+              OutlinedButton.icon(
+                key: const Key('persona-generation-view'),
+                onPressed: () => Navigator.pop(dialogContext, 'view'),
+                icon: const Icon(Icons.edit_outlined, size: 18),
+                label: const Text('查看并编辑'),
+              ),
+              FilledButton.icon(
+                onPressed: () => Navigator.pop(dialogContext, 'use'),
+                icon: const Icon(Icons.check, size: 18),
+                label: const Text('立即启用'),
+              ),
+            ],
+          ],
+        );
+      },
+    );
+    if (!mounted) return;
+    if (action == 'view' && persona != null) {
+      await _editPersona(persona);
+    } else if (action == 'use' && persona != null) {
+      setState(() => _selectedPersona = persona);
+      try {
+        await ref
+            .read(aiPersonaSelectionStoreProvider)
+            .write(_agentContext.bookId, persona.id);
+      } catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('人格已启用，但保存选择失败：$error')),
+        );
+      }
+    }
   }
 
   SnackBarAction? _resumeGenerationAction(
@@ -1619,11 +1776,23 @@ class _AiChatPanelState extends ConsumerState<AiChatPanel> {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
         children: [
-          _buildShortcutChip('总结本章', '请总结本章的核心内容与主要情节。'),
+          _buildShortcutChip(
+            '总结本章',
+            '请只根据随附的“本章内容”总结本章的核心内容与主要情节。'
+                '不要转而回答历史对话中的问题，不要引入未在附件中出现的后续情节。',
+          ),
           const SizedBox(width: 8),
-          _buildShortcutChip('本章提纲', '请用层次化要点列出本章内容提纲。'),
+          _buildShortcutChip(
+            '本章提纲',
+            '请只根据随附的“本章内容”，用层次化要点列出本章提纲。'
+                '忽略旧对话的未完成话题，不要分析其他章节。',
+          ),
           const SizedBox(width: 8),
-          _buildShortcutChip('续写本章', '请根据本章故事发展和文风，合理续写接下来的内容。'),
+          _buildShortcutChip(
+            '续写本章',
+            '请只以随附的“本章内容”为上文，延续其故事发展、叙事视角和文风合理续写。'
+                '不要回答旧问题，也不要声称已知道原作后续。',
+          ),
         ],
       ),
     );
@@ -1703,11 +1872,27 @@ class _AiChatPanelState extends ConsumerState<AiChatPanel> {
                 msg.content,
                 style: TextStyle(color: theme.colorScheme.onPrimary),
               )
+            else if (msg.content.isEmpty && msg.isStreaming)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.auto_awesome_rounded,
+                    size: 16,
+                    color: theme.colorScheme.primary,
+                  ),
+                  const SizedBox(width: 9),
+                  Text(
+                    '正在生成回答…',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              )
             else
               MarkdownBody(
-                data: msg.content.isEmpty && msg.isStreaming
-                    ? '...'
-                    : msg.content,
+                data: msg.content,
                 styleSheet: aiMarkdownStyleSheet(theme),
               ),
             for (final attachment in msg.attachments)
@@ -1864,41 +2049,55 @@ class _AiChatPanelState extends ConsumerState<AiChatPanel> {
     final currentOverride = settings.overrideFor(bookId);
     final choice = await showModalBottomSheet<String>(
       context: context,
+      isScrollControlled: true,
       builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              title: const Text('本书防剧透范围'),
-              subtitle: Text(
-                currentOverride == null
-                    ? '跟随全局 · ${_spoilerProtectionLabel(settings.defaultLevel)}'
-                    : _spoilerProtectionLabel(currentOverride),
-              ),
-            ),
-            const Divider(height: 1),
-            ListTile(
-              leading: Icon(
-                currentOverride == null ? Icons.check : Icons.settings,
-              ),
-              title: const Text('跟随全局设置'),
-              subtitle: Text(_spoilerProtectionLabel(settings.defaultLevel)),
-              onTap: () => Navigator.pop(sheetContext, 'inherit'),
-            ),
-            for (final level in SpoilerProtectionLevel.values)
+        child: SizedBox(
+          height: (MediaQuery.sizeOf(sheetContext).height * 0.68)
+              .clamp(300.0, 480.0)
+              .toDouble(),
+          child: Column(
+            children: [
               ListTile(
-                leading: Icon(
-                  currentOverride == level
-                      ? Icons.check
-                      : level == SpoilerProtectionLevel.fullBook
-                          ? Icons.warning_amber
-                          : Icons.shield_outlined,
+                title: const Text('本书防剧透范围'),
+                subtitle: Text(
+                  currentOverride == null
+                      ? '跟随全局 · ${_spoilerProtectionLabel(settings.defaultLevel)}'
+                      : _spoilerProtectionLabel(currentOverride),
                 ),
-                title: Text(_spoilerProtectionLabel(level)),
-                onTap: () => Navigator.pop(sheetContext, level.wireName),
               ),
-            const SizedBox(height: 8),
-          ],
+              const Divider(height: 1),
+              Expanded(
+                child: ListView(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  children: [
+                    _buildSpoilerChoiceTile(
+                      sheetContext,
+                      selected: currentOverride == null,
+                      icon: currentOverride == null
+                          ? Icons.check
+                          : Icons.settings,
+                      title: '跟随全局设置',
+                      subtitle: _spoilerProtectionLabel(settings.defaultLevel),
+                      onTap: () => Navigator.pop(sheetContext, 'inherit'),
+                    ),
+                    for (final level in SpoilerProtectionLevel.values)
+                      _buildSpoilerChoiceTile(
+                        sheetContext,
+                        selected: currentOverride == level,
+                        icon: currentOverride == level
+                            ? Icons.check
+                            : level == SpoilerProtectionLevel.fullBook
+                                ? Icons.warning_amber
+                                : Icons.shield_outlined,
+                        title: _spoilerProtectionLabel(level),
+                        onTap: () =>
+                            Navigator.pop(sheetContext, level.wireName),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1914,6 +2113,54 @@ class _AiChatPanelState extends ConsumerState<AiChatPanel> {
       _spoilerProtectionLevel =
           override ?? ref.read(spoilerProtectionProvider).defaultLevel;
     });
+  }
+
+  Widget _buildSpoilerChoiceTile(
+    BuildContext context, {
+    required bool selected,
+    required IconData icon,
+    required String title,
+    String? subtitle,
+    required VoidCallback onTap,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 150),
+      margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+      decoration: BoxDecoration(
+        color: selected
+            ? scheme.primaryContainer.withValues(alpha: 0.88)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: selected
+              ? scheme.primary.withValues(alpha: 0.4)
+              : Colors.transparent,
+        ),
+      ),
+      child: Material(
+        type: MaterialType.transparency,
+        borderRadius: BorderRadius.circular(14),
+        child: ListTile(
+          selected: selected,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          leading: Icon(icon),
+          title: Text(
+            title,
+            style: TextStyle(
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+            ),
+          ),
+          subtitle: subtitle == null ? null : Text(subtitle),
+          trailing: selected
+              ? Icon(Icons.check_circle_rounded, color: scheme.primary)
+              : null,
+          onTap: onTap,
+        ),
+      ),
+    );
   }
 
   Widget _buildInputBar() {

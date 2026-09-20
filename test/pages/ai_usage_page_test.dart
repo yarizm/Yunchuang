@@ -110,6 +110,29 @@ void main() {
     expect(find.text('最近 30 天'), findsOneWidget);
   });
 
+  testWidgets('显示当前模型代号和分模型历史用量', (tester) async {
+    final env = await setUp(tester, home: const AiUsagePage());
+    final tracker = env.container.read(aiUsageTrackerProvider);
+    tracker.record(
+      env.id,
+      const AIUsage(promptTokens: 700, completionTokens: 300),
+      modelName: 'deepseek-flash',
+    );
+    tracker.record(
+      env.id,
+      const AIUsage(promptTokens: 90, completionTokens: 10),
+      modelName: 'deepseek-reasoner',
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(Key('ai-usage-model-code-${env.id}')), findsOneWidget);
+    expect(find.text('当前模型代号'), findsOneWidget);
+    expect(find.text('deepseek-flash'), findsNWidgets(2));
+    expect(find.text('deepseek-reasoner'), findsOneWidget);
+    expect(find.textContaining('累计 ≈ 1.00k'), findsOneWidget);
+    expect(find.textContaining('累计 ≈ 100'), findsOneWidget);
+  });
+
   testWidgets('provider list summarises usage and links to the usage page',
       (tester) async {
     final env = await setUp(tester, home: const AiProviderListPage());

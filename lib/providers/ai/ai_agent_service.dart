@@ -155,7 +155,17 @@ class AIAgentService {
       }
 
       if (action.isFinal) {
-        yield AgentEvent.done(action.answer);
+        yield* _streamFinalAnswer(
+          provider,
+          userContent,
+          context: context,
+          history: preparedHistory,
+          persona: persona,
+          skills: enabledSkills,
+          observations: observations,
+          plannedAnswer: action.answer,
+          cancellation: cancellation,
+        );
         return;
       }
 
@@ -334,6 +344,92 @@ class AIAgentService {
     yield AgentEvent.done(answer);
   }
 
+  /// The tool planner deliberately uses a blocking JSON response because a
+  /// partial JSON object cannot be acted on safely. The user-facing answer is
+  /// a separate request, though, and must use the provider's streaming API.
+  ///
+  /// Some third-party "OpenAI compatible" endpoints advertise streaming but
+  /// finish without yielding a chunk. In that case the planner's answer is a
+  /// useful last-resort fallback instead of showing an empty-response error.
+  Stream<AgentEvent> _streamFinalAnswer(
+    AIProvider provider,
+    String userContent, {
+    required AgentContext context,
+    required List<ChatMessage> history,
+    required AiPersona? persona,
+    required List<AiSkill> skills,
+    required List<String> observations,
+    required String plannedAnswer,
+    AIRequestCancellation? cancellation,
+  }) async* {
+    cancellation?.throwIfCancelled();
+    // The planner response and the user-facing streaming response are two
+    // requests. Give UI consumers a frame boundary before awaiting the second
+    // request so a loading state is painted instead of appearing frozen.
+    yield const AgentEvent.keepAlive();
+    final fallbackSystemPrompt = _buildFallbackSystemPrompt(
+      context,
+      persona: persona,
+      skills: skills,
+    );
+    final evidence = observations.isEmpty
+        ? '本轮没有调用本地工具；请只使用用户提供的内容和当前阅读上下文。'
+        : observations.join('\n\n');
+    final message = '''
+请直接回答“当前用户请求”，只输出最终回答，不要输出 JSON、规划过程或工具协议。
+必须紧扣当前请求；历史消息只用于理解指代，不得把旧问题当成当前问题。
+若随附正文或附件足以回答，应以附件为准，不要擅自换题。缺少可靠依据时请明确说明，不要编造。
+
+<current_user_request>
+$userContent
+</current_user_request>
+
+<local_tool_evidence>
+$evidence
+</local_tool_evidence>
+
+<planner_draft>
+$plannedAnswer
+</planner_draft>
+''';
+    final messageBudget = math.min(
+      maxUserPromptChars,
+      math.max(
+        minUserPromptChars,
+        maxRequestChars - fallbackSystemPrompt.length,
+      ),
+    );
+    final boundedMessage = _truncatePromptText(message, messageBudget);
+    final boundedHistory = _boundProviderHistory([
+      ChatMessage(role: 'system', content: fallbackSystemPrompt),
+      ...history,
+    ], boundedMessage);
+    final buffer = StringBuffer();
+    await for (final chunk in provider.chatStreamWithCancellation(
+      boundedMessage,
+      history: boundedHistory,
+      cancellation: cancellation,
+    )) {
+      cancellation?.throwIfCancelled();
+      if (chunk.isEmpty) continue;
+      buffer.write(chunk);
+      yield AgentEvent.delta(chunk);
+    }
+    cancellation?.throwIfCancelled();
+    final streamedAnswer = buffer.toString();
+    final answer =
+        streamedAnswer.trim().isEmpty ? plannedAnswer : streamedAnswer;
+    if (answer.trim().isEmpty) {
+      throw const AIProviderResponseException('AI Provider 返回了空响应，请重试。');
+    }
+    if (streamedAnswer.trim().isEmpty) {
+      // Keep the UI state machine identical for providers whose streaming
+      // endpoint silently returned no chunks.
+      yield AgentEvent.delta(answer);
+    }
+    yield AgentEvent.done(answer);
+  }
+
   List<ChatMessage> _boundProviderHistory(
     List<ChatMessage> history,
     String currentMessage,
@@ -396,6 +492,7 @@ class AIAgentService {
     return '''
 你是阅读器芸窗内的 AI 助手。
 当前这轮对话无法继续使用工具，请直接用中文回答，不要输出工具 JSON。
+始终只回答最新一条用户请求；历史消息只用于理解指代，不得延续已经结束的话题。
 如果问题需要书籍事实，只能基于用户消息、附件、已有工具结果和当前阅读上下文回答；缺少依据时要明确说明。
 
 ${_spoilerPolicyPrompt(context)}
@@ -440,7 +537,9 @@ ${reason == null ? '' : '降级原因：$reason'}
     final skillPrompt = _skillPrompt(skills);
     return '''
 你是阅读器芸窗内的轻量 AI 助手。
-优先使用工具获取书籍事实，不要猜测当前书中的人物、情节或术语。
+先准确识别最新一条用户请求，并且只处理这项请求。历史消息只用于理解指代，不得把旧问题当成当前问题。
+附件或当前阅读上下文已经足够时直接输出 final；只有缺少完成当前请求所必需的书籍事实时才调用工具。
+不要猜测当前书中的人物、情节或术语，也不要为了调用工具而偏离用户问题。
 $actionProtocol
 
 ${_spoilerPolicyPrompt(context)}

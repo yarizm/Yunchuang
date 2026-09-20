@@ -32,8 +32,13 @@ class AIService {
   ///
   /// [trackUsage] 只在正式使用的实例上开：测试连接那一下不算用量。
   AIProvider _createProvider(AiProvider row, {bool trackUsage = false}) {
+    final modelName = row.modelName.trim();
     final onUsage = trackUsage
-        ? (AIUsage usage) => usageSink?.record(row.id, usage)
+        ? (AIUsage usage) => usageSink?.record(
+              row.id,
+              usage,
+              modelName: modelName.isEmpty ? null : modelName,
+            )
         : null;
     switch (row.type) {
       case 'ollama':

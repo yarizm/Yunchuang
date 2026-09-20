@@ -75,7 +75,11 @@ typedef AIUsageListener = void Function(AIUsage usage);
 /// 收用量的地方。[AiUsageTracker] 实现它；AIService 只认这个接口，测试里
 /// 可以塞个假的。
 abstract interface class AIUsageSink {
-  void record(int providerId, AIUsage usage);
+  void record(
+    int providerId,
+    AIUsage usage, {
+    String? modelName,
+  });
 
   /// Provider 删掉了，它的记录也不用留。
   void forget(int providerId);
@@ -309,6 +313,14 @@ class AiUsageDay {
   const AiUsageDay({required this.date, required this.usage});
 }
 
+@immutable
+class AiModelUsage {
+  final String modelName;
+  final AiProviderUsage usage;
+
+  const AiModelUsage({required this.modelName, required this.usage});
+}
+
 /// 按 Provider 累计 token 用量，存在偏好里（一个 JSON 串）。
 ///
 /// 不进数据库：这只是给用户看个大概的计数器，不值得一张表和一次迁移；
@@ -319,6 +331,7 @@ class AiUsageTracker extends ChangeNotifier implements AIUsageSink {
   final SharedPreferences _prefs;
   final DateTime Function() _now;
   final Map<int, AiProviderUsage> _byProvider = {};
+  final Map<int, Map<String, AiProviderUsage>> _byModel = {};
 
   AiUsageTracker(this._prefs, {DateTime Function()? now})
       : _now = now ?? DateTime.now {
@@ -330,6 +343,77 @@ class AiUsageTracker extends ChangeNotifier implements AIUsageSink {
   /// 某个 Provider 的用量，「今日」按当天折算。没记录过返回空值。
   AiProviderUsage usageFor(int providerId) =>
       (_byProvider[providerId] ?? AiProviderUsage.empty).forDay(_dayKey());
+
+  /// A provider may be edited to use another model over time. Keeping the
+  /// model id on each new usage event prevents old tokens from being silently
+  /// relabelled as the provider's current model.
+  List<AiModelUsage> modelUsagesFor(int providerId) {
+    final result = [
+      for (final entry in _byModel[providerId]?.entries ??
+          const <MapEntry<String, AiProviderUsage>>[])
+        AiModelUsage(
+          modelName: entry.key,
+          usage: entry.value.forDay(_dayKey()),
+        ),
+    ];
+    result.sort(
+      (left, right) => right.usage.totalTokens.compareTo(
+        left.usage.totalTokens,
+      ),
+    );
+    return result;
+  }
+
+  AiProviderUsage unattributedUsageFor(int providerId) {
+    final total = usageFor(providerId);
+    final models = modelUsagesFor(providerId);
+    if (models.isEmpty) return total;
+    final prompt = models.fold<int>(
+      0,
+      (sum, item) => sum + item.usage.promptTokens,
+    );
+    final completion = models.fold<int>(
+      0,
+      (sum, item) => sum + item.usage.completionTokens,
+    );
+    final requests = models.fold<int>(
+      0,
+      (sum, item) => sum + item.usage.requests,
+    );
+    final estimatedRequests = models.fold<int>(
+      0,
+      (sum, item) => sum + item.usage.estimatedRequests,
+    );
+    final todayPrompt = models.fold<int>(
+      0,
+      (sum, item) => sum + item.usage.todayPromptTokens,
+    );
+    final todayCompletion = models.fold<int>(
+      0,
+      (sum, item) => sum + item.usage.todayCompletionTokens,
+    );
+    final todayRequests = models.fold<int>(
+      0,
+      (sum, item) => sum + item.usage.todayRequests,
+    );
+    int remaining(int all, int attributed) =>
+        all > attributed ? all - attributed : 0;
+    final dayKey = _dayKey();
+    final remainingToday = AiDayUsage(
+      promptTokens: remaining(total.todayPromptTokens, todayPrompt),
+      completionTokens: remaining(total.todayCompletionTokens, todayCompletion),
+      requests: remaining(total.todayRequests, todayRequests),
+    );
+    return AiProviderUsage(
+      promptTokens: remaining(total.promptTokens, prompt),
+      completionTokens: remaining(total.completionTokens, completion),
+      requests: remaining(total.requests, requests),
+      estimatedRequests: remaining(total.estimatedRequests, estimatedRequests),
+      days: remainingToday.requests == 0 ? const {} : {dayKey: remainingToday},
+      todayKey: dayKey,
+      since: total.since,
+    );
+  }
 
   /// 最近 [days] 天每天的用量（含今天），没记录的天是 0。[providerId] 为空
   /// 时把所有 Provider 加在一起。
@@ -355,20 +439,37 @@ class AiUsageTracker extends ChangeNotifier implements AIUsageSink {
   }
 
   @override
-  void record(int providerId, AIUsage usage) {
+  void record(
+    int providerId,
+    AIUsage usage, {
+    String? modelName,
+  }) {
     final now = _now();
+    final dayKey = _dayKey(now);
     _byProvider[providerId] =
         (_byProvider[providerId] ?? AiProviderUsage.empty).add(
       usage,
-      dayKey: _dayKey(now),
+      dayKey: dayKey,
       now: now,
     );
+    final normalizedModel = modelName?.trim();
+    if (normalizedModel != null && normalizedModel.isNotEmpty) {
+      final models = _byModel.putIfAbsent(providerId, () => {});
+      models[normalizedModel] =
+          (models[normalizedModel] ?? AiProviderUsage.empty).add(
+        usage,
+        dayKey: dayKey,
+        now: now,
+      );
+    }
     _save();
     notifyListeners();
   }
 
   void reset(int providerId) {
-    if (_byProvider.remove(providerId) == null) return;
+    final removedProvider = _byProvider.remove(providerId) != null;
+    final removedModels = _byModel.remove(providerId) != null;
+    if (!removedProvider && !removedModels) return;
     _save();
     notifyListeners();
   }
@@ -377,8 +478,9 @@ class AiUsageTracker extends ChangeNotifier implements AIUsageSink {
   void forget(int providerId) => reset(providerId);
 
   void resetAll() {
-    if (_byProvider.isEmpty) return;
+    if (_byProvider.isEmpty && _byModel.isEmpty) return;
     _byProvider.clear();
+    _byModel.clear();
     _save();
     notifyListeners();
   }
@@ -400,12 +502,27 @@ class AiUsageTracker extends ChangeNotifier implements AIUsageSink {
         final id = int.tryParse(entry.key.toString());
         final value = entry.value;
         if (id == null || value is! Map) continue;
-        _byProvider[id] =
-            AiProviderUsage.fromJson(Map<String, Object?>.from(value));
+        final providerJson = Map<String, Object?>.from(value);
+        _byProvider[id] = AiProviderUsage.fromJson(providerJson);
+        final rawModels = value['_models'];
+        if (rawModels is Map) {
+          final models = <String, AiProviderUsage>{};
+          for (final modelEntry in rawModels.entries) {
+            final modelValue = modelEntry.value;
+            if (modelValue is! Map) continue;
+            final name = modelEntry.key.toString().trim();
+            if (name.isEmpty) continue;
+            models[name] = AiProviderUsage.fromJson(
+              Map<String, Object?>.from(modelValue),
+            );
+          }
+          if (models.isNotEmpty) _byModel[id] = models;
+        }
       }
     } catch (_) {
       // 存坏了就从零开始；这只是计数器。
       _byProvider.clear();
+      _byModel.clear();
     }
   }
 
@@ -414,7 +531,14 @@ class AiUsageTracker extends ChangeNotifier implements AIUsageSink {
       storageKey,
       jsonEncode({
         for (final entry in _byProvider.entries)
-          entry.key.toString(): entry.value.toJson(),
+          entry.key.toString(): {
+            ...entry.value.toJson(),
+            if (_byModel[entry.key]?.isNotEmpty == true)
+              '_models': {
+                for (final model in _byModel[entry.key]!.entries)
+                  model.key: model.value.toJson(),
+              },
+          },
       }),
     );
   }

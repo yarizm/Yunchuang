@@ -152,6 +152,47 @@ void main() {
       expect(reloaded.usageFor(5).requests, 1);
     });
 
+    test('按具体模型代号分组，切换模型后保留历史归属', () {
+      final tracker = AiUsageTracker(prefs, now: () => now);
+      tracker.record(
+        5,
+        const AIUsage(promptTokens: 100, completionTokens: 20),
+        modelName: 'deepseek-chat',
+      );
+      tracker.record(
+        5,
+        const AIUsage(promptTokens: 200, completionTokens: 30),
+        modelName: 'deepseek-reasoner',
+      );
+      // 兼容升级前或服务端不报模型的记录。
+      tracker.record(
+        5,
+        const AIUsage(promptTokens: 7, completionTokens: 3),
+      );
+
+      final models = tracker.modelUsagesFor(5);
+      expect(models.map((item) => item.modelName), [
+        'deepseek-reasoner',
+        'deepseek-chat',
+      ]);
+      expect(models.first.usage.totalTokens, 230);
+      expect(models.last.usage.totalTokens, 120);
+      expect(tracker.unattributedUsageFor(5).totalTokens, 10);
+      expect(tracker.unattributedUsageFor(5).todayTotalTokens, 10);
+
+      final reloaded = AiUsageTracker(prefs, now: () => now);
+      expect(reloaded.modelUsagesFor(5), hasLength(2));
+      expect(
+        reloaded
+            .modelUsagesFor(5)
+            .firstWhere((item) => item.modelName == 'deepseek-chat')
+            .usage
+            .requests,
+        1,
+      );
+      expect(reloaded.unattributedUsageFor(5).totalTokens, 10);
+    });
+
     test('存坏了从零开始，不崩', () async {
       await prefs.setString(AiUsageTracker.storageKey, '{not json');
       final tracker = AiUsageTracker(prefs, now: () => now);

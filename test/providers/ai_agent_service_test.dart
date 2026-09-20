@@ -163,6 +163,67 @@ void main() {
       expect(systemPrompt, contains('scope 必须保持 read'));
     });
 
+    test('最终回答通过 Provider 流式逐段输出', () async {
+      final provider = _ScriptedProvider(
+        [
+          jsonEncode({'action': 'final', 'answer': '规划阶段草稿'})
+        ],
+        streamChunks: const ['流式', '回答'],
+      );
+      final agent = AIAgentService(
+        aiService: _FakeAIService(database, provider),
+        database: database,
+      );
+      final cancellation = AIRequestCancellation();
+
+      final events = await agent
+          .send(
+            const AiPromptDraft(instruction: '只回答当前问题'),
+            context: const AgentContext(),
+            cancellation: cancellation,
+          )
+          .toList();
+
+      expect(
+        events
+            .where((event) => event.type == AgentEventType.delta)
+            .map((event) => event.content),
+        const ['流式', '回答'],
+      );
+      expect(events.last.type, AgentEventType.done);
+      expect(events.last.content, '流式回答');
+      expect(provider.streamMessages, hasLength(1));
+      expect(provider.streamMessages.single, contains('只回答当前问题'));
+    });
+
+    test('流式端点返回空流时保留规划回答', () async {
+      final provider = _ScriptedProvider([
+        jsonEncode({'action': 'final', 'answer': '保底回答'}),
+      ]);
+      final agent = AIAgentService(
+        aiService: _FakeAIService(database, provider),
+        database: database,
+      );
+
+      final events = await agent
+          .send(
+            const AiPromptDraft(instruction: '测试空流'),
+            context: const AgentContext(),
+            cancellation: AIRequestCancellation(),
+          )
+          .toList();
+
+      expect(events.last.type, AgentEventType.done);
+      expect(events.last.content, '保底回答');
+      expect(
+        events
+            .where((event) => event.type == AgentEventType.delta)
+            .single
+            .content,
+        '保底回答',
+      );
+    });
+
     test('falls back to plain chat after two invalid JSON outputs', () async {
       final provider = _ScriptedProvider(
         ['not json', 'still not json'],

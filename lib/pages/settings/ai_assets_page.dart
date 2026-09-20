@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:drift/drift.dart' show Value;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
@@ -10,6 +11,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../database/app_database.dart';
 import '../../providers/ai/ai_http.dart';
 import '../../providers/database_provider.dart';
+import '../../widgets/ai_chat/persona_editor_dialog.dart';
 
 enum _AssetAction { export, delete }
 
@@ -411,8 +413,10 @@ class _PersonasTabState extends ConsumerState<_PersonasTab> {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
-        trailing: SizedBox.square(
-          dimension: 48,
+        onTap: busy ? null : () => _editPersona(persona),
+        trailing: SizedBox(
+          // Two Material icon actions each reserve a 48 px tap target.
+          width: 96,
           child: busy
               ? const Center(
                   child: SizedBox.square(
@@ -420,38 +424,48 @@ class _PersonasTabState extends ConsumerState<_PersonasTab> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   ),
                 )
-              : PopupMenuButton<_AssetAction>(
-                  tooltip: '更多人格操作',
-                  onSelected: (action) {
-                    switch (action) {
-                      case _AssetAction.export:
-                        _exportPersona(persona);
-                        break;
-                      case _AssetAction.delete:
-                        _confirmAndDeletePersona(persona);
-                        break;
-                    }
-                  },
-                  itemBuilder: (_) => const [
-                    PopupMenuItem(
-                      value: _AssetAction.export,
-                      child: Row(
-                        children: [
-                          Icon(Icons.ios_share, size: 20),
-                          SizedBox(width: 12),
-                          Text('导出人格'),
-                        ],
-                      ),
+              : Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    IconButton(
+                      tooltip: '查看和编辑人格',
+                      onPressed: () => _editPersona(persona),
+                      icon: const Icon(Icons.edit_outlined, size: 20),
                     ),
-                    PopupMenuItem(
-                      value: _AssetAction.delete,
-                      child: Row(
-                        children: [
-                          Icon(Icons.delete_outline, size: 20),
-                          SizedBox(width: 12),
-                          Text('删除人格'),
-                        ],
-                      ),
+                    PopupMenuButton<_AssetAction>(
+                      tooltip: '更多人格操作',
+                      onSelected: (action) {
+                        switch (action) {
+                          case _AssetAction.export:
+                            _exportPersona(persona);
+                            break;
+                          case _AssetAction.delete:
+                            _confirmAndDeletePersona(persona);
+                            break;
+                        }
+                      },
+                      itemBuilder: (_) => const [
+                        PopupMenuItem(
+                          value: _AssetAction.export,
+                          child: Row(
+                            children: [
+                              Icon(Icons.ios_share, size: 20),
+                              SizedBox(width: 12),
+                              Text('导出人格'),
+                            ],
+                          ),
+                        ),
+                        PopupMenuItem(
+                          value: _AssetAction.delete,
+                          child: Row(
+                            children: [
+                              Icon(Icons.delete_outline, size: 20),
+                              SizedBox(width: 12),
+                              Text('删除人格'),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -485,6 +499,42 @@ class _PersonasTabState extends ConsumerState<_PersonasTab> {
     } finally {
       _personaDialogOpen = false;
       if (mounted && _creating) setState(() => _creating = false);
+    }
+  }
+
+  Future<void> _editPersona(AiPersona persona) async {
+    if (_personaDialogOpen || _busyPersonaIds.contains(persona.id)) return;
+    _personaDialogOpen = true;
+    try {
+      final draft = await showPersonaEditorDialog(
+        context,
+        persona: persona,
+      );
+      if (draft == null || !mounted) return;
+      if (!_startPersonaOperation(persona.id)) return;
+      try {
+        await ref.read(aiServiceProvider).savePersona(
+              AiPersonasCompanion(
+                name: Value(draft.name),
+                systemPrompt: Value(draft.systemPrompt),
+                documentMarkdown: Value(draft.documentMarkdown),
+                updatedAt: Value(DateTime.now()),
+              ),
+              personaId: persona.id,
+            );
+        if (!mounted) return;
+        widget.onChanged();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('人格已保存')),
+        );
+      } catch (error) {
+        if (!mounted) return;
+        _showAssetError(context, '保存人格失败', error);
+      } finally {
+        _finishPersonaOperation(persona.id);
+      }
+    } finally {
+      _personaDialogOpen = false;
     }
   }
 
