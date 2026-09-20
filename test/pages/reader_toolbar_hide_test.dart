@@ -80,8 +80,8 @@ void main() {
       ),
     );
 
-    // 系统状态栏 24 + 顶部工具栏 84。
-    expect(observedTopPadding, 108);
+    // 正文只保留系统安全区；顶部工具栏是悬浮层，不再强制占 84px。
+    expect(observedTopPadding, 24);
     final buildsAfterFirstFrame = readerBodyBuilds;
 
     // 隐藏工具栏不得改变正文的顶部预留：padding 抖动会让滚动模式瞬间跳位，
@@ -89,13 +89,13 @@ void main() {
     controller.setToolbarVisible(false);
     await tester.pump();
 
-    expect(observedTopPadding, 108);
+    expect(observedTopPadding, 24);
     expect(readerBodyBuilds, buildsAfterFirstFrame);
 
     controller.setToolbarVisible(true);
     await tester.pump();
 
-    expect(observedTopPadding, 108);
+    expect(observedTopPadding, 24);
     expect(readerBodyBuilds, buildsAfterFirstFrame);
   });
 

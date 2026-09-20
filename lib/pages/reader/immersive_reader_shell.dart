@@ -369,11 +369,11 @@ class _ImmersiveReaderShellState extends State<ImmersiveReaderShell> {
                 onPointerDown: _handleReaderPointerDown,
                 onPointerCancel: _handleReaderPointerCancel,
                 onPointerUp: _handleReaderPointerUp,
-                child: _ReaderContentInset(
-                  key: const Key('reader-body-media-query'),
-                  topInset: _topChromeHeight,
-                  child: readerBody!,
-                ),
+                // 正文部件自己把系统安全区和“顶部留白”相加。这里不能再把
+                // 整个顶栏高度塞进 MediaQuery，否则设置为 0 时仍会凭空多出
+                // 84 px；顶栏本来就是可收起的半透明浮层，允许正文从其下方
+                // 延伸才符合沉浸阅读的预期。
+                child: readerBody!,
               ),
             ),
             if (widget.lineFocusEnabled) _buildLineFocusOverlay(context),
@@ -560,38 +560,6 @@ class _ImmersiveReaderShellState extends State<ImmersiveReaderShell> {
           ],
         );
       },
-    );
-  }
-}
-
-/// 给正文预留顶部工具栏覆盖的高度。
-///
-/// 预留量是恒定的，不跟随 `toolbarVisible`：正文的顶部 padding 一旦随工具栏
-/// 显隐抖动，滚动模式会瞬间跳位（`txt_reader` / `epub_reader` 直接把它当作
-/// ListView 的 padding.top），分页模式则会在每次点击时触发
-/// `PagedReader.didChangeDependencies` 清空段落高度缓存并重排整章。
-///
-/// 单独抽成一个 widget，是为了把 `MediaQuery.of` 的依赖限制在这里——放在
-/// 外层 `AnimatedBuilder` 里会让整个阅读器 Stack 订阅 viewInsets、textScaler
-/// 等所有字段，键盘弹出或字号变化都会重建工具栏与浮层。
-class _ReaderContentInset extends StatelessWidget {
-  const _ReaderContentInset({
-    super.key,
-    required this.topInset,
-    required this.child,
-  });
-
-  final double topInset;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    final data = MediaQuery.of(context);
-    return MediaQuery(
-      data: data.copyWith(
-        padding: data.padding.copyWith(top: data.padding.top + topInset),
-      ),
-      child: child,
     );
   }
 }

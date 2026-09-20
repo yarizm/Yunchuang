@@ -292,19 +292,33 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
       return;
     }
 
-    final indexes = [centerIndex - 1, centerIndex, centerIndex + 1]
-        .where((index) => index >= 0 && index < _chapters.length);
-    var changed = false;
+    final indexes = [centerIndex, centerIndex - 1, centerIndex + 1]
+        .where((index) => index >= 0 && index < _chapters.length)
+        .toList(growable: false);
     final dao = ref.read(bookDaoProvider);
-    for (final index in indexes) {
-      if (_chapterContents[index].isNotEmpty) continue;
-      final cached = await dao.getChapterContent(_chapters[index].id);
+
+    // 先只取用户正在等的目标章，并立即刷新。旧实现按“上一章、当前章、
+    // 下一章”串行查询，目录跳转后必须等三次数据库读取都结束，正文和 AI
+    // 上下文才一起恢复，看起来像 AI 助手卡住了一下。
+    if (_chapterContents[centerIndex].isEmpty) {
+      final cached = await dao.getChapterContent(_chapters[centerIndex].id);
       if (cached != null) {
-        _chapterContents[index] = cached;
-        changed = true;
+        _chapterContents[centerIndex] = cached;
+        if (mounted && _controller.currentChapterIndex == centerIndex) {
+          setState(() {});
+        }
       }
     }
-    if (changed && mounted) setState(() {});
+
+    // 邻章只是预热，不需要让当前整页再重建一次。并行读取也避免长目录里
+    // 连续翻章时排队等待。
+    await Future.wait([
+      for (final index in indexes.skip(1))
+        if (_chapterContents[index].isEmpty)
+          dao.getChapterContent(_chapters[index].id).then((cached) {
+            if (cached != null) _chapterContents[index] = cached;
+          }),
+    ]);
   }
 
   void _trimChapterMemory(int centerIndex) {

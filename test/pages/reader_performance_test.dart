@@ -255,6 +255,23 @@ void main() {
       find.byKey(const ValueKey('toc-chapter-9000')),
       findsOneWidget,
     );
+    expect(
+      find.byKey(const ValueKey('toc-global-progress')),
+      findsOneWidget,
+    );
+    expect(find.text('第 9001 / 10000 章'), findsOneWidget);
+
+    final progress = tester.widget<Slider>(
+      find.byKey(const ValueKey('toc-global-progress')),
+    );
+    progress.onChanged!(1234);
+    await tester.pump();
+
+    expect(find.text('第 1235 / 10000 章'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('toc-chapter-1234')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('paged reader configures horizontal page navigation',
@@ -411,6 +428,13 @@ void main() {
     await tester.pump();
 
     expect(find.byKey(const ValueKey('page_curl_overlay')), findsWidgets);
+    final perspective = tester.widget<Transform>(
+      find.byKey(const ValueKey('page_curl_transform-0')),
+    );
+    // Rotation composes with the configured 0.0018 perspective entry, so the
+    // resulting matrix value varies slightly with the drag angle.
+    expect(perspective.transform.entry(3, 2), inInclusiveRange(0.001, 0.002));
+    expect(perspective.transform.entry(0, 0), lessThan(1));
   });
 
   testWidgets('paged reader plain effect keeps curl overlay disabled',

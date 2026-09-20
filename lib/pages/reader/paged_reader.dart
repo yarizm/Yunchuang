@@ -121,6 +121,7 @@ class _PagedReaderState extends State<PagedReader> {
   Timer? _chapterBoundaryTimer;
   bool _chapterBoundaryRequestPending = false;
   Offset? _pagePointerDownLocal;
+  int? _pageTurnOrigin;
   int? _localActiveSentenceIndex;
   List<SentenceSpan> _sentences = const [];
 
@@ -566,11 +567,18 @@ class _PagedReaderState extends State<PagedReader> {
   }
 
   bool _handleScrollNotification(ScrollNotification notification) {
+    if (notification is ScrollStartNotification && _pageTurnOrigin == null) {
+      _pageTurnOrigin = _currentPage;
+    } else if (notification is ScrollEndNotification &&
+        _pageTurnOrigin != null) {
+      setState(() => _pageTurnOrigin = null);
+    }
     return false;
   }
 
   void _handlePagePointerDown(PointerDownEvent event) {
     _pagePointerDownLocal = event.localPosition;
+    _pageTurnOrigin = _currentPage;
   }
 
   void _handlePagePointerCancel(PointerCancelEvent event) {
@@ -798,18 +806,42 @@ class _PagedReaderState extends State<PagedReader> {
         if (_pageController.hasClients && _pageController.page != null) {
           page = _pageController.page!;
         }
-        final delta = (page - index).clamp(-1.0, 1.0).toDouble();
+        final origin = _pageTurnOrigin ?? _currentPage;
+        if (index != origin) return child!;
+        final delta = (page - origin).clamp(-1.0, 1.0).toDouble();
         final progress = delta.abs();
-        final easedProgress = Curves.easeOutCubic.transform(progress);
-        final lift = math.sin(progress * math.pi) * 3;
+        if (progress <= 0.001) return child!;
+        final easedProgress = Curves.easeInOutCubic.transform(progress);
+        final direction = delta.sign;
+        final angle = -direction * easedProgress * math.pi * 0.46;
+        final transform = Matrix4.identity()
+          ..setEntry(3, 2, 0.0018)
+          ..rotateY(angle);
 
-        return Transform.translate(
-          offset: Offset(delta > 0 ? -lift : lift, 0),
-          child: _PageCurlSurface(
-            progress: easedProgress,
-            direction: delta == 0 ? 1.0 : delta.sign,
-            child: child!,
-          ),
+        // PageView 会平移整个 item。反向抵消这段平移，让纸张的
+        // 书脊边留在原地，再围绕书脊做透视旋转，而不是整页滑走。
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final width = constraints.maxWidth.isFinite
+                ? constraints.maxWidth
+                : MediaQuery.sizeOf(context).width;
+            return Transform.translate(
+              offset: Offset(delta * width, 0),
+              child: Transform(
+                key: ValueKey('page_curl_transform-$index'),
+                alignment: direction > 0
+                    ? Alignment.centerLeft
+                    : Alignment.centerRight,
+                transform: transform,
+                filterQuality: FilterQuality.medium,
+                child: _PageCurlSurface(
+                  progress: easedProgress,
+                  direction: direction,
+                  child: child!,
+                ),
+              ),
+            );
+          },
         );
       },
     );
