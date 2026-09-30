@@ -169,7 +169,7 @@ Drift ORM（`drift` + `sqlite3_flutter_libs`），数据库文件 `reading_offli
 - **Personas**（`ai_personas` 表）：角色人设注入 system prompt，支持从书籍内容生成角色，生成过程可中断并通过 `CharacterPersonaCheckpointStore` 断点续做；生成后的 Markdown 人格文档可预览、编辑、保存和启用
 - **剧透保护**（`spoiler_protection_provider.dart`）：限制 AI 读取当前阅读进度之后的内容，可按书覆盖全局设置
 
-Agent planner 的工具规划响应仍是一次性 JSON；规划完成后会发起独立的流式最终回答请求，并通过 `AgentEvent.keepAlive` 让 UI 先绘制“正在生成”状态。规划结果为空或兼容服务不发流式 chunk 时，使用规划草稿作为回退，不能把用户留在空回答。
+Agent planner 的规划响应是一次性 JSON，只决定调工具还是可以回答：`{"action":"final"}` 不带回答正文，回答由随后的流式请求生成，只生成一遍——规划里再写一遍正文，就是同一份回答花两份 token、首字还要等规划整段生成完。流式请求一个字都没给出（兼容服务不发 chunk，或请求失败）时，规划若仍附带了 answer 就用它，否则退回一次非流式请求；已经输出过内容再失败就照常报错，不把兜底回答拼在半截后面。
 
 UI 在 `widgets/ai_chat_panel.dart`（阅读器内嵌）和 `pages/ai/ai_chat_page.dart`。Provider 配置在 `pages/settings/ai_provider_form.dart`，用量在 `ai_usage_page.dart`；人格预览与编辑共用 `widgets/ai_chat/persona_editor_dialog.dart`。新增 AI 面板异步任务时，必须用明确的取消入口和 `PopScope(canPop: false)` 防止返回键销毁任务上下文。
 
@@ -193,7 +193,7 @@ UI 在 `widgets/ai_chat_panel.dart`（阅读器内嵌）和 `pages/ai/ai_chat_pa
 
 ## 测试
 
-109 个测试文件，覆盖 database / models / pages / parsers / providers / services / widgets。提交前应确保 `flutter analyze` 无告警、`flutter test` 全绿。
+112 个测试文件，覆盖 database / models / pages / parsers / providers / services / widgets。提交前应确保 `flutter analyze` 无告警、`flutter test` 全绿。
 
 性能相关测试（`reader_performance_test.dart`、`home_shelf_performance_test.dart`）约束重建次数，修改阅读器或书架渲染逻辑时容易触发失败，需认真对待而非直接调整阈值。另见 `PERFORMANCE.md`。
 
@@ -209,9 +209,11 @@ UI 在 `widgets/ai_chat_panel.dart`（阅读器内嵌）和 `pages/ai/ai_chat_pa
 | `source_reference_list.dart` | 回复下方的来源卡片，只吃一组引用和点击回调 |
 | `character_name_dialog.dart` | 生成角色人设前问角色名 |
 | `persona_editor_dialog.dart` | 人格文档预览、编辑与保存草稿 |
+| `persona_generated_dialog.dart` | 角色人格生成完成后的提示框：查看并编辑 / 立即启用 |
+| `spoiler_choice_tile.dart` | 本书防剧透范围里的一个选项 |
 | `ai_markdown_style.dart` | 回复的 Markdown 样式 |
 
-拆出去的都是**不碰面板状态**的部分，因此各自有独立测试（`test/widgets/agent_source_parsing_test.dart`、`attachment_chunking_test.dart`）。面板剩下的是状态机本身：发送循环、会话切换、人设管理、消息持久化——这些缠在 `setState` 和请求 id 上，再拆要先把状态拎出来，不是搬代码能解决的。
+拆出去的都是**不碰面板状态**的部分，因此各自有独立测试（`test/widgets/agent_source_parsing_test.dart`、`attachment_chunking_test.dart`、`persona_editor_dialog_test.dart` 等）。面板剩下的是状态机本身：发送循环、会话切换、人设管理、消息持久化——这些缠在 `setState` 和请求 id 上，再拆要先把状态拎出来，不是搬代码能解决的。
 
 新增 AI 功能时：无状态的部分放 `ai_chat/` 并配测试，别再堆回面板。
 
@@ -219,6 +221,6 @@ UI 在 `widgets/ai_chat_panel.dart`（阅读器内嵌）和 `pages/ai/ai_chat_pa
 
 以下文件已超过合理体积，新增功能时优先考虑拆分而非继续堆积：
 
-- `widgets/ai_chat_panel.dart`（~1970 行，已拆出上表六个文件）
+- `widgets/ai_chat_panel.dart`（~2160 行，已拆出上表九个文件）
 - `pages/reader/reader_page.dart`（~2200 行）
 - `pages/reader/paged_reader.dart`（~1200 行）
