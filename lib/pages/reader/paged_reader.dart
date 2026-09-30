@@ -242,6 +242,7 @@ class _PagedReaderState extends State<PagedReader> {
       final startPage =
           anchor >= 1.0 ? _pageOffsets.length - 1 : _pageForPosition(anchor);
       _currentPage = startPage;
+      _pageTurnOrigin = null;
 
       setState(() {});
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -492,6 +493,7 @@ class _PagedReaderState extends State<PagedReader> {
       _pageWidth = 0;
       _pageOffsets = [];
       _currentPage = 0;
+      _pageTurnOrigin = null;
       _paragraphLineCache.clear();
       _cancelChapterBoundaryRequest();
     } else if (oldWidget.initialPosition != widget.initialPosition &&
@@ -567,18 +569,25 @@ class _PagedReaderState extends State<PagedReader> {
   }
 
   bool _handleScrollNotification(ScrollNotification notification) {
-    if (notification is ScrollStartNotification && _pageTurnOrigin == null) {
-      _pageTurnOrigin = _currentPage;
+    if (notification is ScrollStartNotification) {
+      _pageTurnOrigin ??= _currentPage;
     } else if (notification is ScrollEndNotification &&
         _pageTurnOrigin != null) {
-      setState(() => _pageTurnOrigin = null);
+      // 手指按住一页还在动的翻页时，hold 也会发 ScrollEnd，但页面停在半路。
+      // 这时清掉 origin，接着拖动就会从四舍五入过的 _currentPage 重新起算，
+      // 卷页效果跳到另一页。只有停在整页上，这一次翻页才算结束。
+      final page = _pageController.hasClients ? _pageController.page : null;
+      if (page == null || (page - page.roundToDouble()).abs() < 0.001) {
+        // 不用 setState：停稳后当前页不管 origin 是哪页都不变形，重建一遍
+        // 画出来的东西完全一样。
+        _pageTurnOrigin = null;
+      }
     }
     return false;
   }
 
   void _handlePagePointerDown(PointerDownEvent event) {
     _pagePointerDownLocal = event.localPosition;
-    _pageTurnOrigin = _currentPage;
   }
 
   void _handlePagePointerCancel(PointerCancelEvent event) {
@@ -806,17 +815,21 @@ class _PagedReaderState extends State<PagedReader> {
         if (_pageController.hasClients && _pageController.page != null) {
           page = _pageController.page!;
         }
+        // 静止页、非 origin 页也套同样的结构，只是变换为单位矩阵。直接
+        // return child! 的话，每次翻页开始 / 结束时树的结构一变，整页
+        // SelectableText 都会被卸载重建、重新排版，翻页起手容易掉帧。
         final origin = _pageTurnOrigin ?? _currentPage;
-        if (index != origin) return child!;
-        final delta = (page - origin).clamp(-1.0, 1.0).toDouble();
-        final progress = delta.abs();
-        if (progress <= 0.001) return child!;
-        final easedProgress = Curves.easeInOutCubic.transform(progress);
-        final direction = delta.sign;
-        final angle = -direction * easedProgress * math.pi * 0.46;
-        final transform = Matrix4.identity()
-          ..setEntry(3, 2, 0.0018)
-          ..rotateY(angle);
+        final delta =
+            index == origin ? (page - origin).clamp(-1.0, 1.0).toDouble() : 0.0;
+        final active = delta.abs() > 0.001;
+        final easedProgress =
+            active ? Curves.easeInOutCubic.transform(delta.abs()) : 0.0;
+        final direction = active ? delta.sign : 1.0;
+        final transform = active
+            ? (Matrix4.identity()
+              ..setEntry(3, 2, 0.0018)
+              ..rotateY(-direction * easedProgress * math.pi * 0.46))
+            : Matrix4.identity();
 
         // PageView 会平移整个 item。反向抵消这段平移，让纸张的
         // 书脊边留在原地，再围绕书脊做透视旋转，而不是整页滑走。
@@ -826,14 +839,15 @@ class _PagedReaderState extends State<PagedReader> {
                 ? constraints.maxWidth
                 : MediaQuery.sizeOf(context).width;
             return Transform.translate(
-              offset: Offset(delta * width, 0),
+              offset: Offset(active ? delta * width : 0.0, 0),
               child: Transform(
                 key: ValueKey('page_curl_transform-$index'),
                 alignment: direction > 0
                     ? Alignment.centerLeft
                     : Alignment.centerRight,
                 transform: transform,
-                filterQuality: FilterQuality.medium,
+                // 静止时不走 ImageFilter，免得整页每帧离屏重采样、字发虚。
+                filterQuality: active ? FilterQuality.medium : null,
                 child: _PageCurlSurface(
                   progress: easedProgress,
                   direction: direction,

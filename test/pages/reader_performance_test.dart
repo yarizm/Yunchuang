@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yunchuang/database/app_database.dart';
@@ -272,6 +274,19 @@ void main() {
       find.byKey(const ValueKey('toc-chapter-1234')),
       findsOneWidget,
     );
+
+    // 滑杆只属于「目录」页；切到书签再切回来，列表还停在拖到的位置。
+    await tester.tap(find.widgetWithText(Tab, '书签'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('toc-global-progress')), findsNothing);
+
+    await tester.tap(find.widgetWithText(Tab, '目录'));
+    await tester.pumpAndSettle();
+    expect(find.text('第 1235 / 10000 章'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('toc-chapter-1234')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('paged reader configures horizontal page navigation',
@@ -435,6 +450,79 @@ void main() {
     // resulting matrix value varies slightly with the drag angle.
     expect(perspective.transform.entry(3, 2), inInclusiveRange(0.001, 0.002));
     expect(perspective.transform.entry(0, 0), lessThan(1));
+  });
+
+  testWidgets('curl page turns keep the page text mounted', (tester) async {
+    final content = List.filled(1200, '仿真翻页效果需要页边阴影和折痕。').join();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PagedReader(content: content, pageTurnEffect: 'curl'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 翻页开始、结束时树的结构不能变：一变整页 SelectableText 就会被
+    // 卸载重建、重新排版。
+    final before = tester.state(find.byType(EditableText).first);
+    final controller =
+        tester.widget<PageView>(find.byType(PageView)).controller!;
+    controller.jumpTo(controller.position.viewportDimension * 0.35);
+    await tester.pump();
+    expect(tester.state(find.byType(EditableText).first), same(before));
+
+    await tester.pumpAndSettle();
+    expect(tester.state(find.byType(EditableText).first), same(before));
+  });
+
+  testWidgets('touching a page mid-turn keeps the curl on the turning page',
+      (tester) async {
+    final content = List.filled(1200, '仿真翻页效果需要页边阴影和折痕。').join();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PagedReader(content: content, pageTurnEffect: 'curl'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    Finder curling(int index) => find.descendant(
+          of: find.byKey(ValueKey('page_curl_transform-$index')),
+          matching: find.byKey(const ValueKey('page_curl_overlay')),
+        );
+    final controller =
+        tester.widget<PageView>(find.byType(PageView)).controller!;
+    final width = controller.position.viewportDimension;
+    unawaited(
+      controller.animateToPage(
+        1,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.linear,
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 260));
+    expect(controller.page, greaterThan(0.5));
+    expect(curling(0), findsOneWidget);
+
+    // 快速连翻时，第二次触摸常落在上一页还没停稳的时候。
+    final touch = await tester.startGesture(
+      tester.getCenter(find.byType(PageView)),
+    );
+    await tester.pump(const Duration(milliseconds: 16));
+    await touch.moveBy(Offset(-width * 0.05, 0));
+    await tester.pump(const Duration(milliseconds: 16));
+    await touch.moveBy(Offset(-width * 0.02, 0));
+    await tester.pump(const Duration(milliseconds: 16));
+
+    expect(curling(0), findsOneWidget);
+    expect(curling(1), findsNothing);
+    await touch.up();
+    await tester.pumpAndSettle();
   });
 
   testWidgets('paged reader plain effect keeps curl overlay disabled',

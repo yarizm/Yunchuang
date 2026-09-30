@@ -44,6 +44,89 @@ class ReaderTocSheet {
         return StatefulBuilder(
           builder: (sheetCtx, setSheetState) {
             final theme = Theme.of(sheetCtx);
+            // 滑杆只放在「目录」页：放在 TabBarView 外面时切到「书签」也会显示，
+            // 拖了只改标签，目录列表没挂载、跟不上。
+            final progressBar = chapters.isEmpty
+                ? null
+                : Padding(
+                    padding: const EdgeInsets.fromLTRB(18, 0, 18, 12),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.surfaceContainerHigh,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: theme.colorScheme.outlineVariant
+                              .withValues(alpha: 0.24),
+                        ),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.swap_vert_rounded,
+                                  size: 18,
+                                  color: theme.colorScheme.primary,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    '全局定位',
+                                    style: theme.textTheme.labelLarge?.copyWith(
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                                Text(
+                                  '第 ${previewChapterIndex + 1} / ${chapters.length} 章',
+                                  key: const Key(
+                                    'toc-global-progress-label',
+                                  ),
+                                  style: theme.textTheme.labelMedium?.copyWith(
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            Slider(
+                              key: const Key('toc-global-progress'),
+                              min: 0,
+                              max: chapters.length > 1
+                                  ? (chapters.length - 1).toDouble()
+                                  : 1,
+                              value: chapters.length > 1
+                                  ? previewChapterIndex.toDouble()
+                                  : 0,
+                              onChanged: chapters.length <= 1
+                                  ? null
+                                  : (value) {
+                                      final index = value
+                                          .round()
+                                          .clamp(
+                                            0,
+                                            chapters.length - 1,
+                                          )
+                                          .toInt();
+                                      if (index != previewChapterIndex) {
+                                        setSheetState(() {
+                                          previewChapterIndex = index;
+                                        });
+                                      }
+                                      _scrollToTocChapter(
+                                        tocScrollController,
+                                        index,
+                                        tocItemExtent,
+                                      );
+                                    },
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
             return DefaultTabController(
               length: 2,
               child: SafeArea(
@@ -157,120 +240,42 @@ class ReaderTocSheet {
                                 ),
                               ),
                             ),
-                            if (chapters.isNotEmpty)
-                              Padding(
-                                padding:
-                                    const EdgeInsets.fromLTRB(18, 0, 18, 12),
-                                child: DecoratedBox(
-                                  decoration: BoxDecoration(
-                                    color:
-                                        theme.colorScheme.surfaceContainerHigh,
-                                    borderRadius: BorderRadius.circular(16),
-                                    border: Border.all(
-                                      color: theme.colorScheme.outlineVariant
-                                          .withValues(alpha: 0.24),
-                                    ),
-                                  ),
-                                  child: Padding(
-                                    padding:
-                                        const EdgeInsets.fromLTRB(12, 8, 12, 8),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Row(
-                                          children: [
-                                            Icon(
-                                              Icons.swap_vert_rounded,
-                                              size: 18,
-                                              color: theme.colorScheme.primary,
-                                            ),
-                                            const SizedBox(width: 8),
-                                            Expanded(
-                                              child: Text(
-                                                '全局定位',
-                                                style: theme
-                                                    .textTheme.labelLarge
-                                                    ?.copyWith(
-                                                  fontWeight: FontWeight.w700,
-                                                ),
-                                              ),
-                                            ),
-                                            Text(
-                                              '第 ${previewChapterIndex + 1} / ${chapters.length} 章',
-                                              key: const Key(
-                                                'toc-global-progress-label',
-                                              ),
-                                              style: theme.textTheme.labelMedium
-                                                  ?.copyWith(
-                                                color: theme.colorScheme
-                                                    .onSurfaceVariant,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                        Slider(
-                                          key: const Key('toc-global-progress'),
-                                          min: 0,
-                                          max: chapters.length > 1
-                                              ? (chapters.length - 1).toDouble()
-                                              : 1,
-                                          value: chapters.length > 1
-                                              ? previewChapterIndex.toDouble()
-                                              : 0,
-                                          onChanged: chapters.length <= 1
-                                              ? null
-                                              : (value) {
-                                                  final index = value
-                                                      .round()
-                                                      .clamp(
-                                                        0,
-                                                        chapters.length - 1,
-                                                      )
-                                                      .toInt();
-                                                  if (index !=
-                                                      previewChapterIndex) {
-                                                    setSheetState(() {
-                                                      previewChapterIndex =
-                                                          index;
-                                                    });
-                                                  }
-                                                  _scrollToTocChapter(
-                                                    tocScrollController,
-                                                    index,
-                                                    tocItemExtent,
-                                                  );
-                                                },
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
                             Expanded(
                               child: TabBarView(
                                 children: [
-                                  ListView.builder(
-                                    controller: tocScrollController,
-                                    itemExtent: tocItemExtent,
-                                    padding: const EdgeInsets.fromLTRB(
-                                        12, 0, 12, 16),
-                                    itemCount: chapters.length,
-                                    itemBuilder: (ctx, index) {
-                                      final chapter = chapters[index];
-                                      final isCurrent = index ==
-                                          controller.currentChapterIndex;
-                                      return _buildTocTile(
-                                        theme,
-                                        chapter,
-                                        index,
-                                        isCurrent: isCurrent,
-                                        onTap: () {
-                                          Navigator.pop(ctx);
-                                          onChapterSelected(index);
-                                        },
-                                      );
-                                    },
+                                  Column(
+                                    children: [
+                                      if (progressBar != null) progressBar,
+                                      Expanded(
+                                        child: ListView.builder(
+                                          // 切到书签再切回来时列表会重建；按 key 从
+                                          // PageStorage 取回滚动位置，和滑杆标签对得上。
+                                          key: const PageStorageKey<String>(
+                                            'reader-toc-chapters',
+                                          ),
+                                          controller: tocScrollController,
+                                          itemExtent: tocItemExtent,
+                                          padding: const EdgeInsets.fromLTRB(
+                                              12, 0, 12, 16),
+                                          itemCount: chapters.length,
+                                          itemBuilder: (ctx, index) {
+                                            final chapter = chapters[index];
+                                            final isCurrent = index ==
+                                                controller.currentChapterIndex;
+                                            return _buildTocTile(
+                                              theme,
+                                              chapter,
+                                              index,
+                                              isCurrent: isCurrent,
+                                              onTap: () {
+                                                Navigator.pop(ctx);
+                                                onChapterSelected(index);
+                                              },
+                                            );
+                                          },
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                   _buildBookmarksTab(
                                     theme,
