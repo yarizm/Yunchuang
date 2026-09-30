@@ -386,7 +386,7 @@ class AgentContext {
       };
 }
 
-enum AgentEventType { status, keepAlive, delta, done }
+enum AgentEventType { status, delta, done }
 
 class AgentEvent {
   final AgentEventType type;
@@ -397,8 +397,6 @@ class AgentEvent {
 
   const AgentEvent.status(String content, [Map<String, dynamic>? metadata])
       : this._(AgentEventType.status, content, metadata);
-
-  const AgentEvent.keepAlive() : this._(AgentEventType.keepAlive, '');
 
   const AgentEvent.delta(String content)
       : this._(AgentEventType.delta, content);

@@ -349,6 +349,10 @@ class _ProviderUsageCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // Dify 的模型由应用自己决定，表单不存模型代号，它的用量本来就不分模型。
+    // 只有配了模型的 Provider，没归到模型上的那部分才是升级前的旧记录。
+    final modelName = provider.modelName.trim();
+    final isDify = provider.type == 'dify';
     return GlassContainer.stable(
       padding: const EdgeInsets.all(20),
       margin: const EdgeInsets.only(bottom: 12),
@@ -389,9 +393,11 @@ class _ProviderUsageCard extends StatelessWidget {
                 const SizedBox(width: 12),
                 Expanded(
                   child: SelectableText(
-                    provider.modelName.trim().isEmpty
-                        ? '服务端未提供（${provider.type}）'
-                        : provider.modelName.trim(),
+                    modelName.isNotEmpty
+                        ? modelName
+                        : isDify
+                            ? '由 Dify 应用决定'
+                            : '未配置',
                     textAlign: TextAlign.end,
                     style: theme.textTheme.labelLarge?.copyWith(
                       color: theme.colorScheme.primary,
@@ -440,10 +446,14 @@ class _ProviderUsageCard extends StatelessWidget {
             if (!unattributed.isEmpty)
               _ModelUsageRow(
                 model: AiModelUsage(
-                  modelName: '旧记录（未区分模型）',
+                  modelName: modelName.isNotEmpty
+                      ? '旧记录（未区分模型）'
+                      : isDify
+                          ? 'Dify 应用（不区分模型）'
+                          : '未配置模型',
                   usage: unattributed,
                 ),
-                muted: true,
+                muted: modelName.isNotEmpty,
               ),
           ],
         ],

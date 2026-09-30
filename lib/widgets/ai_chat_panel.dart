@@ -23,6 +23,8 @@ import 'ai_chat/attachment_viewer.dart';
 import 'ai_chat/character_name_dialog.dart';
 import 'ai_chat/chat_message.dart';
 import 'ai_chat/persona_editor_dialog.dart';
+import 'ai_chat/persona_generated_dialog.dart';
+import 'ai_chat/spoiler_choice_tile.dart';
 import 'empty_state.dart';
 
 class AiChatPanel extends ConsumerStatefulWidget {
@@ -359,7 +361,6 @@ class _AiChatPanelState extends ConsumerState<AiChatPanel> {
     var assistantAdded = false;
     var retryWithUnreadAccess = false;
     Timer? streamRenderTimer;
-    Timer? answerStartPulseTimer;
 
     void flushStreamBuffer() {
       streamRenderTimer?.cancel();
@@ -435,23 +436,7 @@ class _AiChatPanelState extends ConsumerState<AiChatPanel> {
             cancellation: cancellation,
           )) {
         if (!_isActiveSend(requestId)) return;
-        if (event.type == AgentEventType.keepAlive) {
-          // Paint the transition from tool planning to the real streaming
-          // answer request even when the provider has not emitted text yet.
-          setState(() {});
-          var remainingPulses = 4;
-          answerStartPulseTimer?.cancel();
-          answerStartPulseTimer = Timer.periodic(
-            const Duration(milliseconds: 16),
-            (timer) {
-              if (!_isActiveSend(requestId) || --remainingPulses <= 0) {
-                timer.cancel();
-              }
-              if (_isActiveSend(requestId)) setState(() {});
-            },
-          );
-          continue;
-        } else if (event.type == AgentEventType.status) {
+        if (event.type == AgentEventType.status) {
           if (_requiresUnreadConfirmation(event)) {
             final approved = await _confirmUnreadAccess();
             if (!_isActiveSend(requestId)) return;
@@ -545,7 +530,6 @@ class _AiChatPanelState extends ConsumerState<AiChatPanel> {
       _scrollToBottom();
     } finally {
       streamRenderTimer?.cancel();
-      answerStartPulseTimer?.cancel();
       if (_isActiveSend(requestId)) {
         setState(() {
           _loading = false;
@@ -1551,72 +1535,15 @@ class _AiChatPanelState extends ConsumerState<AiChatPanel> {
     AiPersona? persona, {
     required String fallbackName,
   }) async {
-    final action = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) {
-        final theme = Theme.of(dialogContext);
-        return AlertDialog(
-          icon: Icon(
-            Icons.check_circle_rounded,
-            size: 52,
-            color: theme.colorScheme.primary,
-          ),
-          title: const Text('角色人格已生成'),
-          content: Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.primaryContainer.withValues(alpha: 0.72),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.theater_comedy_rounded),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        persona?.name ?? fallbackName,
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 3),
-                      const Text('已保存，可立即查看、编辑或启用'),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('稍后再说'),
-            ),
-            if (persona != null) ...[
-              OutlinedButton.icon(
-                key: const Key('persona-generation-view'),
-                onPressed: () => Navigator.pop(dialogContext, 'view'),
-                icon: const Icon(Icons.edit_outlined, size: 18),
-                label: const Text('查看并编辑'),
-              ),
-              FilledButton.icon(
-                onPressed: () => Navigator.pop(dialogContext, 'use'),
-                icon: const Icon(Icons.check, size: 18),
-                label: const Text('立即启用'),
-              ),
-            ],
-          ],
-        );
-      },
+    final action = await showPersonaGeneratedDialog(
+      context,
+      persona: persona,
+      fallbackName: fallbackName,
     );
     if (!mounted) return;
-    if (action == 'view' && persona != null) {
+    if (action == PersonaGeneratedAction.view && persona != null) {
       await _editPersona(persona);
-    } else if (action == 'use' && persona != null) {
+    } else if (action == PersonaGeneratedAction.use && persona != null) {
       setState(() => _selectedPersona = persona);
       try {
         await ref
@@ -2070,8 +1997,7 @@ class _AiChatPanelState extends ConsumerState<AiChatPanel> {
                 child: ListView(
                   padding: const EdgeInsets.symmetric(vertical: 6),
                   children: [
-                    _buildSpoilerChoiceTile(
-                      sheetContext,
+                    SpoilerChoiceTile(
                       selected: currentOverride == null,
                       icon: currentOverride == null
                           ? Icons.check
@@ -2081,8 +2007,7 @@ class _AiChatPanelState extends ConsumerState<AiChatPanel> {
                       onTap: () => Navigator.pop(sheetContext, 'inherit'),
                     ),
                     for (final level in SpoilerProtectionLevel.values)
-                      _buildSpoilerChoiceTile(
-                        sheetContext,
+                      SpoilerChoiceTile(
                         selected: currentOverride == level,
                         icon: currentOverride == level
                             ? Icons.check
@@ -2113,54 +2038,6 @@ class _AiChatPanelState extends ConsumerState<AiChatPanel> {
       _spoilerProtectionLevel =
           override ?? ref.read(spoilerProtectionProvider).defaultLevel;
     });
-  }
-
-  Widget _buildSpoilerChoiceTile(
-    BuildContext context, {
-    required bool selected,
-    required IconData icon,
-    required String title,
-    String? subtitle,
-    required VoidCallback onTap,
-  }) {
-    final scheme = Theme.of(context).colorScheme;
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 150),
-      margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-      decoration: BoxDecoration(
-        color: selected
-            ? scheme.primaryContainer.withValues(alpha: 0.88)
-            : Colors.transparent,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: selected
-              ? scheme.primary.withValues(alpha: 0.4)
-              : Colors.transparent,
-        ),
-      ),
-      child: Material(
-        type: MaterialType.transparency,
-        borderRadius: BorderRadius.circular(14),
-        child: ListTile(
-          selected: selected,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
-          leading: Icon(icon),
-          title: Text(
-            title,
-            style: TextStyle(
-              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-            ),
-          ),
-          subtitle: subtitle == null ? null : Text(subtitle),
-          trailing: selected
-              ? Icon(Icons.check_circle_rounded, color: scheme.primary)
-              : null,
-          onTap: onTap,
-        ),
-      ),
-    );
   }
 
   Widget _buildInputBar() {

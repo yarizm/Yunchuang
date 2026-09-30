@@ -16,6 +16,8 @@ void main() {
   Future<({AppDatabase database, ProviderContainer container, int id})> setUp(
     WidgetTester tester, {
     required Widget home,
+    String type = 'openai',
+    String modelName = 'deepseek-flash',
   }) async {
     SharedPreferences.setMockInitialValues({});
     final preferences = await SharedPreferences.getInstance();
@@ -24,9 +26,9 @@ void main() {
     final id = await database.into(database.aiProviders).insert(
           AiProvidersCompanion.insert(
             name: '我的 DeepSeek',
-            type: 'openai',
+            type: type,
             baseUrl: 'https://api.deepseek.com',
-            modelName: 'deepseek-flash',
+            modelName: modelName,
             isDefault: const Value(true),
           ),
         );
@@ -131,6 +133,25 @@ void main() {
     expect(find.text('deepseek-reasoner'), findsOneWidget);
     expect(find.textContaining('累计 ≈ 1.00k'), findsOneWidget);
     expect(find.textContaining('累计 ≈ 100'), findsOneWidget);
+  });
+
+  testWidgets('Dify 不存模型代号，新用量不标成旧记录', (tester) async {
+    final env = await setUp(
+      tester,
+      home: const AiUsagePage(),
+      type: 'dify',
+      modelName: '',
+    );
+    // AIService 给没有模型代号的 Provider 记用量时不带模型名。
+    env.container.read(aiUsageTrackerProvider).record(
+          env.id,
+          const AIUsage(promptTokens: 40, completionTokens: 10),
+        );
+    await tester.pumpAndSettle();
+
+    expect(find.text('由 Dify 应用决定'), findsOneWidget);
+    expect(find.text('Dify 应用（不区分模型）'), findsOneWidget);
+    expect(find.text('旧记录（未区分模型）'), findsNothing);
   });
 
   testWidgets('provider list summarises usage and links to the usage page',

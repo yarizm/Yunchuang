@@ -2218,6 +2218,9 @@ void main() {
   });
 }
 
+/// 发送链路（规划请求 → 流式回答 → 落库）里有 FakeAsync 推不动的真实
+/// 异步，光 pumpAndSettle 会在它跑完之前就返回；先让真实事件循环转几轮。
+/// 去掉它有十几个用例会失败，不是时序上的凑合。
 Future<void> _pumpAsyncWork(
   WidgetTester tester, {
   int turns = 4,
@@ -2451,13 +2454,7 @@ class _ScriptedProvider implements AIProvider {
   Future<bool> testConnection() async => true;
 }
 
-Stream<String> _singleChunkStream(String value) {
-  return Stream<String>.multi((controller) {
-    WidgetsBinding.instance.scheduleFrame();
-    controller.addSync(value);
-    controller.closeSync();
-  });
-}
+Stream<String> _singleChunkStream(String value) => Stream.value(value);
 
 class _CheckpointAssetService extends AIAssetService {
   int calls = 0;

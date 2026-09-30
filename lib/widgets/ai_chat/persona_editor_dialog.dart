@@ -136,9 +136,10 @@ class _PersonaEditorDialogState extends State<_PersonaEditorDialog> {
   Widget _buildPreview(ThemeData theme) {
     final document = _documentController.text.trim();
     final prompt = _promptController.text.trim();
-    return Column(
+    // 整个预览一起滚动：提示词和文档都可能很长（自定义人格的提示词没有长度
+    // 上限）。只让文档部分 Expanded 的话，提示词一长就把对话框撑爆。
+    return ListView(
       key: const ValueKey('persona-preview'),
-      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Wrap(
           spacing: 8,
@@ -171,20 +172,20 @@ class _PersonaEditorDialogState extends State<_PersonaEditorDialog> {
         const SizedBox(height: 12),
         Text('人格文档', style: theme.textTheme.labelLarge),
         const SizedBox(height: 4),
-        Expanded(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerLow,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.35),
-              ),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerLow,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: theme.colorScheme.outlineVariant.withValues(alpha: 0.35),
             ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
             child: document.isEmpty
                 ? const Center(child: Text('暂无人格文档'))
-                : Markdown(
+                : MarkdownBody(
                     data: document,
-                    padding: const EdgeInsets.all(14),
                     selectable: true,
                     styleSheet: aiMarkdownStyleSheet(theme),
                   ),
@@ -231,6 +232,11 @@ class _PersonaEditorDialogState extends State<_PersonaEditorDialog> {
               alignLabelWithHint: true,
               helperText: '可直接修改生成的人格设定和示例语气',
             ),
+            // 错误直接显示在输入框下面：SnackBar 会落在对话框遮罩后面。
+            validator: (value) => (value ?? '').trim().isEmpty &&
+                    _promptController.text.trim().isEmpty
+                ? '系统提示词和人格文档不能同时为空'
+                : null,
           ),
         ],
       ),
@@ -239,20 +245,12 @@ class _PersonaEditorDialogState extends State<_PersonaEditorDialog> {
 
   void _submit() {
     if (!_formKey.currentState!.validate()) return;
-    final prompt = _promptController.text.trim();
-    final document = _documentController.text.trim();
-    if (prompt.isEmpty && document.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('系统提示词和人格文档不能同时为空')),
-      );
-      return;
-    }
     Navigator.pop(
       context,
       PersonaEditDraft(
         name: _nameController.text.trim(),
-        systemPrompt: prompt,
-        documentMarkdown: document,
+        systemPrompt: _promptController.text.trim(),
+        documentMarkdown: _documentController.text.trim(),
       ),
     );
   }

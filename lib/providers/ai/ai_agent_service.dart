@@ -150,7 +150,7 @@ class AIAgentService {
           ChatMessage(role: 'assistant', content: raw),
         ];
         nextMessage =
-            '请只输出合法 JSON：{"action":"tool","tool":"工具名","args":{...}} 或 {"action":"final","answer":"..."}。';
+            '请只输出合法 JSON：{"action":"tool","tool":"工具名","args":{...}} 或 {"action":"final"}。';
         continue;
       }
 
@@ -344,13 +344,13 @@ class AIAgentService {
     yield AgentEvent.done(answer);
   }
 
-  /// The tool planner deliberately uses a blocking JSON response because a
-  /// partial JSON object cannot be acted on safely. The user-facing answer is
-  /// a separate request, though, and must use the provider's streaming API.
+  /// 规划请求只决定调工具还是可以回答（`{"action":"final"}` 不带正文），
+  /// 回答由这里的流式请求生成，只生成一遍。规划本身仍是一次性 JSON：半个
+  /// JSON 对象没法安全地执行。
   ///
-  /// Some third-party "OpenAI compatible" endpoints advertise streaming but
-  /// finish without yielding a chunk. In that case the planner's answer is a
-  /// useful last-resort fallback instead of showing an empty-response error.
+  /// 流式请求一个字都没给出（有的兼容端点声称支持流式却不发 chunk，或者
+  /// 请求直接失败）时，规划里若仍附带了 answer 就用它，否则退回一次非流式
+  /// 请求。已经输出过内容再失败就照常报错，不能把另一份回答拼在半截后面。
   Stream<AgentEvent> _streamFinalAnswer(
     AIProvider provider,
     String userContent, {
@@ -363,10 +363,6 @@ class AIAgentService {
     AIRequestCancellation? cancellation,
   }) async* {
     cancellation?.throwIfCancelled();
-    // The planner response and the user-facing streaming response are two
-    // requests. Give UI consumers a frame boundary before awaiting the second
-    // request so a loading state is painted instead of appearing frozen.
-    yield const AgentEvent.keepAlive();
     final fallbackSystemPrompt = _buildFallbackSystemPrompt(
       context,
       persona: persona,
@@ -375,22 +371,18 @@ class AIAgentService {
     final evidence = observations.isEmpty
         ? '本轮没有调用本地工具；请只使用用户提供的内容和当前阅读上下文。'
         : observations.join('\n\n');
-    final message = '''
+    String buildMessage(String request, String toolEvidence) => '''
 请直接回答“当前用户请求”，只输出最终回答，不要输出 JSON、规划过程或工具协议。
 必须紧扣当前请求；历史消息只用于理解指代，不得把旧问题当成当前问题。
 若随附正文或附件足以回答，应以附件为准，不要擅自换题。缺少可靠依据时请明确说明，不要编造。
 
 <current_user_request>
-$userContent
+$request
 </current_user_request>
 
 <local_tool_evidence>
-$evidence
+$toolEvidence
 </local_tool_evidence>
-
-<planner_draft>
-$plannedAnswer
-</planner_draft>
 ''';
     final messageBudget = math.min(
       maxUserPromptChars,
@@ -399,34 +391,91 @@ $plannedAnswer
         maxRequestChars - fallbackSystemPrompt.length,
       ),
     );
-    final boundedMessage = _truncatePromptText(message, messageBudget);
+    // 用户内容和工具结果分开分配预算，不在拼好之后整段砍掉中间：那样会
+    // 切掉附件正文甚至标签，用户也不知道。工具结果至少留四分之一。
+    final contentBudget =
+        math.max(0, messageBudget - buildMessage('', '').length);
+    final evidenceBudget = math.min(
+      evidence.length,
+      math.max(contentBudget - userContent.length, contentBudget ~/ 4),
+    );
+    final boundedEvidence = _truncatePromptText(evidence, evidenceBudget);
+    final boundedRequest = _truncatePromptText(
+      userContent,
+      contentBudget - boundedEvidence.length,
+    );
+    if (boundedRequest.length < userContent.length ||
+        boundedEvidence.length < evidence.length) {
+      yield AgentEvent.status(
+        '回答请求超过长度预算，用户内容和工具结果已保留开头和结尾后发送。',
+        {
+          'inputTruncated': true,
+          'originalChars': userContent.length + evidence.length,
+          'sentChars': boundedRequest.length + boundedEvidence.length,
+        },
+      );
+    }
+    final message = buildMessage(boundedRequest, boundedEvidence);
     final boundedHistory = _boundProviderHistory([
       ChatMessage(role: 'system', content: fallbackSystemPrompt),
       ...history,
-    ], boundedMessage);
+    ], message);
+
     final buffer = StringBuffer();
-    await for (final chunk in provider.chatStreamWithCancellation(
-      boundedMessage,
-      history: boundedHistory,
-      cancellation: cancellation,
-    )) {
-      cancellation?.throwIfCancelled();
-      if (chunk.isEmpty) continue;
-      buffer.write(chunk);
-      yield AgentEvent.delta(chunk);
+    Object? streamError;
+    StackTrace? streamStackTrace;
+    try {
+      await for (final chunk in provider.chatStreamWithCancellation(
+        message,
+        history: boundedHistory,
+        cancellation: cancellation,
+      )) {
+        cancellation?.throwIfCancelled();
+        if (chunk.isEmpty) continue;
+        buffer.write(chunk);
+        yield AgentEvent.delta(chunk);
+      }
+    } on AIRequestCancelledException {
+      rethrow;
+    } catch (error, stackTrace) {
+      if (cancellation?.isCancelled == true ||
+          buffer.toString().trim().isNotEmpty) {
+        rethrow;
+      }
+      streamError = error;
+      streamStackTrace = stackTrace;
     }
     cancellation?.throwIfCancelled();
     final streamedAnswer = buffer.toString();
-    final answer =
-        streamedAnswer.trim().isEmpty ? plannedAnswer : streamedAnswer;
+    if (streamedAnswer.trim().isNotEmpty) {
+      yield AgentEvent.done(streamedAnswer);
+      return;
+    }
+
+    var answer = plannedAnswer;
+    if (answer.trim().isEmpty) {
+      try {
+        answer = await provider.chatWithCancellation(
+          message,
+          history: boundedHistory,
+          cancellation: cancellation,
+        );
+      } on AIRequestCancelledException {
+        rethrow;
+      } catch (_) {
+        // 两次都失败时报流式那次的错：那是用户真正在等的请求。
+        if (streamError != null) {
+          Error.throwWithStackTrace(streamError, streamStackTrace!);
+        }
+        rethrow;
+      }
+      cancellation?.throwIfCancelled();
+    }
     if (answer.trim().isEmpty) {
       throw const AIProviderResponseException('AI Provider 返回了空响应，请重试。');
     }
-    if (streamedAnswer.trim().isEmpty) {
-      // Keep the UI state machine identical for providers whose streaming
-      // endpoint silently returned no chunks.
-      yield AgentEvent.delta(answer);
-    }
+    // 面板的状态机按 delta → done 走，兜底回答也补一个 delta。
+    yield AgentEvent.delta(answer);
     yield AgentEvent.done(answer);
   }
 
@@ -526,14 +575,16 @@ ${reason == null ? '' : '降级原因：$reason'}
     final exampleToolName = toolDescriptions.isEmpty
         ? '工具名'
         : toolDescriptions.first['name'] as String;
+    // final 只表示「可以回答了」，不带正文：回答由下一步的流式请求生成，
+    // 这里再写一遍就是同一份回答生成两次。
+    const finalProtocol = '{"action":"final"}'
+        '（不要在 JSON 里写回答正文，回答会在下一步单独生成）';
     final actionProtocol = toolDescriptions.isEmpty
-        ? '当前没有可用工具。不要输出 tool 动作，只能输出：'
-            '{"action":"final","answer":"用中文回答，可使用 Markdown"}'
+        ? '当前没有可用工具。不要输出 tool 动作，只能输出：$finalProtocol'
         : '你必须只输出 JSON：\n'
             '1. 调用工具：'
             '{"action":"tool","tool":"$exampleToolName","args":{"query":"关键词"}}\n'
-            '2. 最终回答：'
-            '{"action":"final","answer":"用中文回答，可使用 Markdown"}';
+            '2. 可以回答时：$finalProtocol';
     final skillPrompt = _skillPrompt(skills);
     return '''
 你是阅读器芸窗内的轻量 AI 助手。
@@ -739,9 +790,13 @@ class AgentAction {
 
         final action = decoded['action'];
         if (action == 'final') {
+          // 回答正文由之后的流式请求生成，final 可以不带 answer；模型仍然
+          // 附带了就留着，流式请求没给出内容时拿它兜底。
           final answer = decoded['answer'];
-          if (answer is! String || answer.trim().isEmpty) continue;
-          return AgentAction(action: action as String, answer: answer);
+          return AgentAction(
+            action: action as String,
+            answer: answer is String ? answer : '',
+          );
         }
         if (action == 'tool') {
           final tool = decoded['tool'];

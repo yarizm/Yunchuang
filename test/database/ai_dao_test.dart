@@ -330,6 +330,46 @@ void main() {
     expect((await dao.getPersonas()).map((persona) => persona.id),
         isNot(contains(globalId)));
   });
+
+  test('editing a persona only overwrites the edited fields', () async {
+    final bookId = await _insertBook(database, 'Book');
+    final createdAt = DateTime(2020, 1, 1);
+    final personaId = await dao.insertPersona(
+      AiPersonasCompanion.insert(
+        name: '林黛玉人格',
+        type: 'character',
+        bookId: Value(bookId),
+        characterName: const Value('林黛玉'),
+        systemPrompt: const Value('旧提示词'),
+        documentMarkdown: const Value('# 旧文档'),
+        createdAt: Value(createdAt),
+        updatedAt: Value(createdAt),
+      ),
+    );
+    final editedAt = DateTime(2026, 9, 1);
+
+    // 与人格编辑器保存时构造的 companion 一致：只有可编辑的字段。
+    await AIService(dao).savePersona(
+      AiPersonasCompanion(
+        name: const Value('黛玉'),
+        systemPrompt: const Value('新提示词'),
+        documentMarkdown: const Value('# 新文档'),
+        updatedAt: Value(editedAt),
+      ),
+      personaId: personaId,
+    );
+
+    final saved = (await dao.getPersonas()).single;
+    expect(saved.id, personaId);
+    expect(saved.name, '黛玉');
+    expect(saved.systemPrompt, '新提示词');
+    expect(saved.documentMarkdown, '# 新文档');
+    expect(saved.updatedAt, editedAt);
+    expect(saved.type, 'character');
+    expect(saved.bookId, bookId);
+    expect(saved.characterName, '林黛玉');
+    expect(saved.createdAt, createdAt);
+  });
 }
 
 AiProvidersCompanion _provider(String name) {

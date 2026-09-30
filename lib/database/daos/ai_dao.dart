@@ -201,8 +201,15 @@ class AiDao extends DatabaseAccessor<AppDatabase> with _$AiDaoMixin {
   Future<int> insertPersona(AiPersonasCompanion entry) =>
       into(aiPersonas).insert(entry);
 
-  Future<bool> updatePersona(AiPersonasCompanion entry) =>
-      update(aiPersonas).replace(entry);
+  /// 只写 [entry] 里给了值的字段。不能用 `replace`：它按插入规则校验，
+  /// 编辑时只传名称 / 提示词 / 文档，缺 `type` 会直接抛异常，而且会把
+  /// `createdAt` 重置成默认值。
+  Future<bool> updatePersona(AiPersonasCompanion entry) async {
+    final updated = await (update(aiPersonas)
+          ..where((p) => p.id.equals(entry.id.value)))
+        .write(entry.copyWith(id: const Value.absent()));
+    return updated > 0;
+  }
 
   Future<int> deletePersona(int id) =>
       (delete(aiPersonas)..where((p) => p.id.equals(id))).go();

@@ -78,11 +78,13 @@ void main() {
       expect(AgentAction.tryParse('我觉得可以直接回答'), isNull);
     });
 
-    test('rejects an empty final answer', () {
-      expect(
-        AgentAction.tryParse(jsonEncode({'action': 'final', 'answer': '  '})),
-        isNull,
-      );
+    test('accepts a final decision without answer text', () {
+      // 规划只判断「可以回答了」，回答正文由之后的流式请求生成。
+      final action = AgentAction.tryParse('{"action":"final"}');
+
+      expect(action, isNotNull);
+      expect(action!.isFinal, isTrue);
+      expect(action.answer, isEmpty);
     });
   });
 
@@ -221,6 +223,169 @@ void main() {
             .single
             .content,
         '保底回答',
+      );
+    });
+
+    test('规划的 final 不带回答正文，回答只由流式请求生成一遍', () async {
+      final provider = _ScriptedProvider(
+        [
+          jsonEncode({'action': 'final'})
+        ],
+        streamChunks: const ['唯一一份回答'],
+      );
+      final agent = AIAgentService(
+        aiService: _FakeAIService(database, provider),
+        database: database,
+      );
+
+      final events = await agent
+          .send(
+            const AiPromptDraft(instruction: '本章讲了什么？'),
+            context: const AgentContext(),
+          )
+          .toList();
+
+      final plannerPrompt = provider.histories.single!.first.content;
+      expect(plannerPrompt, contains('{"action":"final"}'));
+      expect(plannerPrompt, isNot(contains('"answer":')));
+      expect(provider.chatMessages, hasLength(1));
+      expect(provider.streamMessages, hasLength(1));
+      expect(events.last.type, AgentEventType.done);
+      expect(events.last.content, '唯一一份回答');
+    });
+
+    test('流式请求失败时用规划里附带的回答兜底', () async {
+      final provider = _ScriptedProvider(
+        [
+          jsonEncode({'action': 'final', 'answer': '规划附带的回答'})
+        ],
+        streamError: const AIProviderResponseException('HTTP 429'),
+      );
+      final agent = AIAgentService(
+        aiService: _FakeAIService(database, provider),
+        database: database,
+      );
+
+      final events = await agent
+          .send(
+            const AiPromptDraft(instruction: '限流时也要有回答'),
+            context: const AgentContext(),
+            cancellation: AIRequestCancellation(),
+          )
+          .toList();
+
+      expect(events.last.type, AgentEventType.done);
+      expect(events.last.content, '规划附带的回答');
+      expect(provider.chatMessages, hasLength(1));
+    });
+
+    test('流式请求失败且规划没带回答时退回一次非流式请求', () async {
+      final provider = _ScriptedProvider(
+        [
+          jsonEncode({'action': 'final'}),
+          '非流式回答',
+        ],
+        streamError: const AIProviderResponseException('stream unsupported'),
+      );
+      final agent = AIAgentService(
+        aiService: _FakeAIService(database, provider),
+        database: database,
+      );
+
+      final events = await agent
+          .send(
+            const AiPromptDraft(instruction: '端点不支持流式'),
+            context: const AgentContext(),
+          )
+          .toList();
+
+      expect(events.last.type, AgentEventType.done);
+      expect(events.last.content, '非流式回答');
+      expect(provider.chatMessages, hasLength(2));
+      // 兜底请求用回答的提示词，不是规划的 JSON 协议。
+      expect(
+        provider.histories.last!.first.content,
+        contains('不要输出工具 JSON'),
+      );
+    });
+
+    test('回答请求超预算时分别压缩用户内容和工具结果，并提示用户', () async {
+      final provider = _ScriptedProvider(
+        [
+          jsonEncode({
+            'action': 'tool',
+            'tool': 'get_current_reading_context',
+            'args': {},
+          }),
+          jsonEncode({'action': 'final'}),
+        ],
+        streamChunks: const ['已根据压缩后的内容回答。'],
+      );
+      final agent = AIAgentService(
+        aiService: _FakeAIService(database, provider),
+        database: database,
+      );
+
+      final events = await agent
+          .send(
+            AiPromptDraft(
+              instruction: '总结本章',
+              attachments: [
+                AiAttachment(
+                  id: 'chapter',
+                  title: '超长章节',
+                  content: 'HEAD-MARKER${List.filled(60000, '文').join()}'
+                      'TAIL-MARKER',
+                ),
+              ],
+            ),
+            context: const AgentContext(bookTitle: '预算测试书'),
+          )
+          .toList();
+
+      final sent = provider.streamMessages.single;
+      expect(sent.length, lessThanOrEqualTo(AIAgentService.maxUserPromptChars));
+      expect(sent, contains('HEAD-MARKER'));
+      expect(sent, contains('TAIL-MARKER'));
+      expect(sent, contains('</current_user_request>'));
+      // 工具结果没被连带砍掉。
+      expect(sent, contains('工具 get_current_reading_context 返回'));
+      expect(sent, contains('预算测试书'));
+      expect(
+        events.where((event) => event.content.contains('回答请求超过长度预算')),
+        hasLength(1),
+      );
+      expect(events.last.content, '已根据压缩后的内容回答。');
+    });
+
+    test('已经输出过内容再失败就照常报错，不拼接兜底回答', () async {
+      final provider = _ScriptedProvider(
+        [
+          jsonEncode({'action': 'final', 'answer': '规划附带的回答'})
+        ],
+        streamChunks: const ['半截'],
+        streamError: const AIProviderResponseException('connection reset'),
+      );
+      final agent = AIAgentService(
+        aiService: _FakeAIService(database, provider),
+        database: database,
+      );
+      final events = <AgentEvent>[];
+
+      await expectLater(
+        agent
+            .send(
+              const AiPromptDraft(instruction: '中途断开'),
+              context: const AgentContext(),
+            )
+            .forEach(events.add),
+        throwsA(isA<AIProviderResponseException>()),
+      );
+      expect(
+        events
+            .where((event) => event.type == AgentEventType.delta)
+            .map((event) => event.content),
+        ['半截'],
       );
     });
 
@@ -982,6 +1147,9 @@ AiSkill _skillWithRawPolicy(String allowedToolsJson) {
 class _ScriptedProvider implements AIProvider {
   final List<String> _chatResponses;
   final List<String> streamChunks;
+
+  /// 流式请求在输出完 [streamChunks] 之后抛出的错误。
+  final Object? streamError;
   final chatMessages = <String>[];
   final histories = <List<ChatMessage>?>[];
   final streamMessages = <String>[];
@@ -990,6 +1158,7 @@ class _ScriptedProvider implements AIProvider {
   _ScriptedProvider(
     List<String> chatResponses, {
     this.streamChunks = const [],
+    this.streamError,
   }) : _chatResponses = List.of(chatResponses);
 
   @override
@@ -1016,6 +1185,8 @@ class _ScriptedProvider implements AIProvider {
     for (final chunk in streamChunks) {
       yield chunk;
     }
+    final error = streamError;
+    if (error != null) throw error;
   }
 
   @override
