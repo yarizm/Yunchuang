@@ -50,13 +50,17 @@ Database (SQLite via Drift ORM + FTS5 全文搜索)
 
 `ReaderPage`（`ConsumerStatefulWidget`）是阅读器入口，组合多个部件：
 
-- `ReaderController`（`ChangeNotifier`，非 Riverpod provider）— 阅读器中心状态：当前章节索引、滚动位置、阅读时长计时器、TTS 高亮句索引。`bookProgress` getter 综合章节索引与章内滚动比例，供书架进度条与持久化百分比共用。
-  - **性能设计**：滚动位置额外通过 `scrollPositionListenable`（`ValueNotifier`）暴露，高频滚动更新走 ValueNotifier 而非 `notifyListeners()`，避免大范围重建。改动此处需同步检查 `test/pages/reader_performance_test.dart`。
+- `ReaderController`（`ChangeNotifier`，非 Riverpod provider）— 阅读器中心状态：当前章节索引、章内位置、阅读时长计时器、听书高亮（`TtsHighlight`）。`bookProgress` getter 综合章节索引与章内位置，供书架进度条与持久化百分比共用。
+  - **性能设计**：章内位置额外通过 `scrollPositionListenable`（`ValueNotifier`）暴露，高频滚动更新走 ValueNotifier 而非 `notifyListeners()`，避免大范围重建。改动此处需同步检查 `test/pages/reader_performance_test.dart`。
+- **章内位置一律是字符比例**（读到的字 ÷ 本章正文长度），滚动、翻页、书签、定位、听书断点同一套坐标，切换阅读模式不跑偏。滚动模式由 `ReaderScrollController`（`reader_scroll_controller.dart`）换算：位置取视口顶部那一行的字，恢复时先把目标字所在的列表项布局出来、再按它的真实偏移跳过去，定位期间正文用 `HiddenWhileRestoring` 藏起来。**不要再用 `pixels / maxScrollExtent`**：`ListView.builder` 的 `maxScrollExtent` 是拿已布局项的平均高度外推的估计值，布局越往后它越变，按比例跳会一帧帧重跳——打开书时正文上下抽动、最后停的段落也不对，就是这个原因。见 `test/pages/reader_scroll_restore_test.dart`。
+- 正文底色统一由 `reader_highlights.dart` 叠层：听书段落、听书句子、定位目标，三种阅读器共用，颜色只在这里定。
 - `FormatReader` 抽象 + `ReadingMode` 枚举（`scroll` / `page`）— 两种阅读模式。`paged_reader.dart` 实现分页渲染与仿真书脊翻页，`paragraph_layout.dart` 负责段落排版计算。
 - 三个格式 Reader：`txt_reader`、`epub_reader`（flutter_html）、`pdf_reader`（SyncfusionPdfViewer，用 `GlobalKey<PdfReaderState>` 暴露跳页 API）。
 - `ImmersiveReaderShell`、`ReaderToolbar`、`QuickSettingsPanel`、`TtsControlPanel` — 沉浸式 UI 层，通过 `GlassPageRoute` 推入。
 - `ReaderNavigationHistory` — 章节跳转历史，支持返回上一个阅读位置。
 - `reader_data_loader.dart` / `reader_overlays.dart` / `reader_toc_sheet.dart` — 从 `reader_page.dart` 拆出的数据加载、浮层、目录。目录的全书进度滑杆直接定位长篇章节；章节切换时先加载目标章，再并行预热邻章，避免 AI 面板等待邻章读取。
+
+**分页度量要扣光标位**：翻页模式的正文是 `SelectableText`，底下的 `RenderEditable` 排版前先从宽度里扣掉 3 像素（1 像素间隙 + 2 像素光标宽）。`paged_reader` 量行时用同样的宽度；不扣的话一行恰好排满时渲染端要多断一行，一页多出好几行，页底的字被挤出页外、翻页后也看不到。之前的「两行余量」就是为这个没查清的差异留的，现在保留只是为了不顺带改变每页字数。标题是普通 `Text`，不扣。
 
 正文 Reader 只把系统安全区与用户配置的「正文顶部留白」计入内容 inset。沉浸式工具栏是覆盖层，不再把整段工具栏高度注入 `MediaQuery`；否则用户将留白调为 0 时仍会看到一段无法解释的空白。
 
@@ -173,6 +177,14 @@ Agent planner 的规划响应是一次性 JSON，只决定调工具还是可以�
 
 UI 在 `widgets/ai_chat_panel.dart`（阅读器内嵌）和 `pages/ai/ai_chat_page.dart`。Provider 配置在 `pages/settings/ai_provider_form.dart`，用量在 `ai_usage_page.dart`；人格预览与编辑共用 `widgets/ai_chat/persona_editor_dialog.dart`。新增 AI 面板异步任务时，必须用明确的取消入口和 `PopScope(canPop: false)` 防止返回键销毁任务上下文。
 
+## 听书（TTS）
+
+`TTSService`（`services/tts_service.dart`）**一次只交给引擎一个朗读单位**：一个段落，超过 300 字在句末切开；不到 30 字的短段落（对话）和后面的短段落并成一组，合起来不超过 80 字，不跨页；只有标点或空白的段落跳过。读完一段靠引擎的完成回调接下一段——很多系统引擎不报逐词进度，完成回调是唯一可靠的信号，所以朗读进度、断点续读、正文高亮都以「段」为粒度；引擎报了逐词进度时，再在段落里标出正在读的那一句。位置是字符偏移（`currentOffset`），`play(text, 比例)` 会退到句首，`playFromOffset` 不调整。
+
+- **起点**：没有暂停中的朗读时，工具栏、朗读面板、通知栏按播放都走 `ReaderPage._startTtsFromReadingPosition`——从屏幕正中那一句的句首读；还停在章首（滚动到顶 / 第一页）就从头读。
+- **跟读**：滚动模式由 `ReaderScrollController.reveal` 把正在读的段落滚到正文区上部，段落贴近底边才滚，用户正在拖动时不抢；翻页模式由 `PagedReader` 翻到高亮所在的页，并把各页起点交给 `setSpeechBreaks`，让朗读单位在页首之前的句末断开，读到下一页的内容时页面已经翻过去。见 `test/pages/reader_tts_follow_test.dart`。
+- **外部语音服务**（`services/external_tts.dart`）：OpenAI 兼容的 `POST {baseUrl}/audio/speech`，返回 mp3 用 `audioplayers` 播放（先写临时文件，Windows 不一定支持直接播内存）。播一段的同时预取下一段；暂停后原地续播不重新合成。请求必须设连接超时（`externalTtsBaseOptions`），否则地址填错时要等系统 TCP 超时。Android 上 audioplayers 丢了音频焦点会自己暂停却不发事件，`PlaybackStallWatchdog` 看播放位置停没停，把状态同步成暂停。设置在 TTS 设置页，存 SharedPreferences，键都以 `externalTts` 开头——里面有 API Key，**备份整组排除**（`BackupService._credentialKeyPrefixes`），开关也在这组里，免得恢复出半配置状态。地址、模型、声音没填全时朗读继续用系统引擎。
+
 ## 主题与背景
 
 `lib/theme/app_theme.dart` 定义 Light / Sepia / Dark 三套 Material 3 主题，`app.dart` 的 `_resolveTheme` 支持 `system` 跟随系统亮度（sepia 不参与跟随）。全局使用毛玻璃卡片（`GlassContainer`，`BackdropFilter` + `ClipRRect`）。
@@ -193,7 +205,7 @@ UI 在 `widgets/ai_chat_panel.dart`（阅读器内嵌）和 `pages/ai/ai_chat_pa
 
 ## 测试
 
-112 个测试文件，覆盖 database / models / pages / parsers / providers / services / widgets。提交前应确保 `flutter analyze` 无告警、`flutter test` 全绿。
+118 个测试文件，覆盖 database / models / pages / parsers / providers / services / utils / widgets。提交前应确保 `flutter analyze` 无告警、`flutter test` 全绿。
 
 性能相关测试（`reader_performance_test.dart`、`home_shelf_performance_test.dart`）约束重建次数，修改阅读器或书架渲染逻辑时容易触发失败，需认真对待而非直接调整阈值。另见 `PERFORMANCE.md`。
 
@@ -223,4 +235,4 @@ UI 在 `widgets/ai_chat_panel.dart`（阅读器内嵌）和 `pages/ai/ai_chat_pa
 
 - `widgets/ai_chat_panel.dart`（~2160 行，已拆出上表九个文件）
 - `pages/reader/reader_page.dart`（~2200 行）
-- `pages/reader/paged_reader.dart`（~1200 行）
+- `pages/reader/paged_reader.dart`（~1100 行）

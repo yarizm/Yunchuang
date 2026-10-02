@@ -9,16 +9,17 @@
 1. 强制停止应用后，点击书籍直到出现第一段正文。
 2. 关闭 TTS，连续滚动正文 30 秒。
 3. 连续执行基础翻页和仿真翻页各 30 秒。
-4. 开启 TTS，连续阅读 30 秒，观察句子高亮和自动跨章。
+4. 开启 TTS，连续阅读 30 秒，观察段落高亮、跟读滚动 / 翻页和自动跨章。
 5. 打开包含至少 5000 章的目录，快速往返滑动 30 秒。
 6. 拖动目录全书进度滑杆跳到远处章节，再切换章节并立即打开 AI 面板，确认目标章先显示、邻章预热不阻塞交互。
 7. 连续执行目录、搜索、笔记和 AI 来源跳转，再逐步后退和前进。
 
 代码侧基线使用固定 Widget 测试，覆盖虚拟列表、长段落切块、分页与仿真翻页、
-TTS 跨页高亮和目录大数据量：
+TTS 跨页高亮和目录大数据量；打开书不抽动、听书跟读另有两组：
 
 ```powershell
 flutter test test/pages/reader_performance_test.dart
+flutter test test/pages/reader_scroll_restore_test.dart test/pages/reader_tts_follow_test.dart
 ```
 
 代码会在 Flutter Timeline 中记录：
