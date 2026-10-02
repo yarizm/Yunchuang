@@ -67,6 +67,7 @@ dependencies:
 
   # Keep screen awake while reading
   wakelock_plus: ^1.2.4
+  audioplayers: ^6.8.1
 
 dev_dependencies:
   flutter_test:

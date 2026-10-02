@@ -8,6 +8,7 @@ import '../../database/app_database.dart';
 import '../../database/daos/progress_dao.dart';
 import '../../models/html_text_document.dart';
 import '../../models/reader_locator.dart';
+import '../../models/tts_highlight.dart';
 import '../../providers/ai/agent_models.dart';
 import '../../providers/ai/spoiler_protection_provider.dart';
 import '../../providers/book_reading_settings_provider.dart';
@@ -45,6 +46,7 @@ import 'reader_controller.dart';
 import 'reader_data_loader.dart';
 import 'reader_navigation_history.dart';
 import 'reader_overlays.dart';
+import 'reader_scroll_controller.dart';
 import 'reader_toc_sheet.dart';
 import 'txt_reader.dart';
 
@@ -75,16 +77,17 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
   String? _error;
   bool _isBookmarked = false;
   final Set<int> _loadedPdfTextPages = {};
-  int _lastTrackedChapterIndex = -1;
-  int _positionRestoreRequest = 0;
-  bool _restoringScrollPosition = false;
   bool _exitInProgress = false;
   bool _allowPop = false;
   int _chapterTransitionDirection = 1;
   final GlobalKey _nextChapterButtonKey = GlobalKey();
 
   final GlobalKey<PdfReaderState> _pdfReaderKey = GlobalKey();
-  final Map<int, ScrollController> _scrollControllers = {};
+  final Map<int, ReaderScrollController> _scrollControllers = {};
+
+  /// 翻页模式下当前章各页的起点，听书从屏幕正中开始读时用。
+  List<int> _pageStarts = const [];
+  int _pageStartsChapter = -1;
   Timer? _scrollDebounce;
   int _todaySecondsBuffer = 0;
   Timer? _todaySecondsFlush;
@@ -136,6 +139,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
         tts: _ttsService,
         onPreviousChapter: _playPreviousTtsChapter,
         onNextChapter: _playNextTtsChapter,
+        onStartPlayback: _startTtsFromReadingPosition,
       );
     WidgetsBinding.instance.addObserver(this);
     _controller.startReadingTimer();
@@ -197,6 +201,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
           _loading = false;
         });
         _controller.chapterCount = _chapters.length;
+        // 控制器跟着书走、不随阅读页销毁，上次退出时的朗读高亮还留在上面。
+        _controller.setTtsHighlight(null);
         _bookTtsSettingsLoad = _loadBookTtsSettings();
         _controller.setCurrentChapterIndex(readerData.initialChapterIndex);
         if (_chapters.isNotEmpty) {
@@ -207,8 +213,12 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
         unawaited(_refreshBookmarkState());
 
         if (readerData.savedProgress != null && initialLocator == null) {
-          _controller
-              .setScrollPosition(readerData.savedProgress!.positionInChapter);
+          // 赶在正文第一帧之前下请求：滚动阅读器挂上时就是藏着的，定位
+          // 好再露出来，不会先闪一下章首。
+          _restoreChapterPosition(
+            readerData.initialChapterIndex,
+            readerData.savedProgress!.positionInChapter,
+          );
         }
         if (readerData.savedProgress != null) {
           _controller.setTotalReadingSeconds(
@@ -230,14 +240,6 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
         unawaited(_preloadAdjacentChapters(readerData.initialChapterIndex));
         timeline.instant('page_render');
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (readerData.savedProgress != null && initialLocator == null) {
-            unawaited(
-              _restoreChapterPosition(
-                readerData.initialChapterIndex,
-                readerData.savedProgress!.positionInChapter,
-              ),
-            );
-          }
           timeline
             ..instant('first_readable_frame', arguments: {
               'elapsed_ms': stopwatch.elapsedMilliseconds,
@@ -344,83 +346,23 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
         );
   }
 
-  Future<void> _restoreChapterPosition(
-    int chapterIndex,
-    double position,
-  ) async {
-    if (!mounted ||
-        _book?.format == 'pdf' ||
-        _controller.readingMode == ReadingMode.page) {
+  /// 把章内位置（字符比例）设为 [position]，滚动模式下让正文跳过去。
+  ///
+  /// 阅读器还没建出来时也可以调：控制器记下请求，列表挂上后再定位，定位
+  /// 期间正文是藏着的。所以调用方不必等下一帧。
+  void _restoreChapterPosition(int chapterIndex, double position) {
+    if (!mounted) return;
+    _controller.setScrollPosition(position);
+    if (_book?.format == 'pdf' || _controller.readingMode == ReadingMode.page) {
       return;
     }
-
-    final request = ++_positionRestoreRequest;
-    _restoringScrollPosition = true;
-    _controller.setScrollPosition(position);
-    final scrollController = _getScrollController(chapterIndex);
-    var previousMaxExtent = -1.0;
-    var stableFrames = 0;
-
-    try {
-      // ListView.builder only knows an estimated extent on its first frame.
-      // Re-apply the saved ratio until lazy layout has converged.
-      for (var attempt = 0; attempt < 16; attempt++) {
-        await WidgetsBinding.instance.endOfFrame;
-        if (!mounted ||
-            request != _positionRestoreRequest ||
-            chapterIndex != _controller.currentChapterIndex) {
-          return;
-        }
-        if (!scrollController.hasClients ||
-            !scrollController.position.hasContentDimensions) {
-          continue;
-        }
-
-        final maxExtent = scrollController.position.maxScrollExtent;
-        if (maxExtent <= 0) {
-          continue;
-        }
-        final target =
-            (maxExtent * position.clamp(0.0, 1.0)).clamp(0.0, maxExtent);
-        if ((scrollController.offset - target).abs() >= 1) {
-          scrollController.jumpTo(target);
-        }
-
-        await WidgetsBinding.instance.endOfFrame;
-        if (!mounted ||
-            request != _positionRestoreRequest ||
-            !scrollController.hasClients) {
-          return;
-        }
-
-        final updatedMaxExtent = scrollController.position.maxScrollExtent;
-        final currentRatio = updatedMaxExtent > 0
-            ? scrollController.offset / updatedMaxExtent
-            : 0.0;
-        final extentStable = (updatedMaxExtent - previousMaxExtent).abs() < 1.0;
-        final positionReached = (currentRatio - position).abs() < 0.005;
-        stableFrames = extentStable && positionReached ? stableFrames + 1 : 0;
-        previousMaxExtent = updatedMaxExtent;
-        if (stableFrames >= 2) {
-          break;
-        }
-      }
-    } finally {
-      if (request == _positionRestoreRequest) {
-        _restoringScrollPosition = false;
-        if (mounted && scrollController.hasClients) {
-          final maxExtent = scrollController.position.maxScrollExtent;
-          final actualPosition =
-              maxExtent > 0 ? scrollController.offset / maxExtent : position;
-          _controller.setScrollPosition(actualPosition);
-        }
-      }
-    }
+    _getScrollController(chapterIndex).jumpToFraction(position);
   }
 
   void _cancelPositionRestore() {
-    _positionRestoreRequest++;
-    _restoringScrollPosition = false;
+    for (final controller in _scrollControllers.values) {
+      controller.cancelRestore();
+    }
   }
 
   void _goToPrevious() {
@@ -520,7 +462,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
     }
     _ttsService.removeListener(_handleTtsCheckpointStateChanged);
     _ttsMediaSession?.detach(_ttsService);
-    _ttsService.onSentenceChanged = null;
+    _ttsService.onHighlightChanged = null;
     _ttsService.onContentCompleted = null;
     unawaited(_ttsService.stop());
     // 退出阅读器就交还给全局的方向设置。dispose 里不能再碰 ref，所以用
@@ -577,9 +519,6 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
   }
 
   void _onScrollUpdate(double position) {
-    if (_restoringScrollPosition) {
-      return;
-    }
     _controller.setScrollPosition(position);
     _scheduleProgressSave(const Duration(milliseconds: 750));
   }
@@ -885,6 +824,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
       onPreviousChapter: _playPreviousTtsChapter,
       onNextChapter: _playNextTtsChapter,
       onBeforePlay: _prepareTtsForPlayback,
+      onStartPlayback: _startTtsFromReadingPosition,
       onSpeechRateChanged: _updateBookTtsSpeechRate,
       onLanguageChanged: _updateBookTtsLanguage,
       onVoiceChanged: _updateBookTtsVoice,
@@ -1154,23 +1094,22 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
       selectedText,
       startOffset,
     );
-    _lastTrackedChapterIndex = chapterIndex;
-    _setupTtsSentenceTracking(content);
+    _attachTtsToChapter();
     final tts = ref.read(ttsServiceProvider);
     await _prepareTtsForPlayback();
     if (!mounted) return;
+    // 面板先弹出来，不等外部语音服务把第一段合成回来；读没读起来、出了
+    // 什么错，面板里都看得到。
+    _showTtsPanel(content);
     final started = await tts.playFromOffset(content, resolvedOffset);
-    if (!mounted) return;
-    if (!started) {
+    if (!started && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(tts.lastError ?? '无法从所选文本开始朗读。'),
           duration: const Duration(seconds: 5),
         ),
       );
-      return;
     }
-    _showTtsPanel(content);
   }
 
   int _resolveSelectionOffset(
@@ -1200,20 +1139,94 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
     return bestMatch >= 0 ? bestMatch : offset;
   }
 
-  /// Set up sentence tracking between TTS service and reader controller.
-  /// Call this whenever the current chapter content changes.
-  void _setupTtsSentenceTracking(String content) {
-    final sentences = SentenceSplitter.split(content);
-    final ctrl = ref.read(readerControllerProvider(widget.bookId));
-    ctrl.setCurrentSentences(sentences);
+  /// 让朗读跟当前章节对上：高亮、跟读、读完接下一章、通知栏的章节信息。
+  /// 每次开始朗读一章前调用。
+  void _attachTtsToChapter() {
     _syncTtsMediaSessionChapter();
     final tts = ref.read(ttsServiceProvider);
-    tts.setCurrentContent(sentences);
-    tts.onSentenceChanged = (idx) {
-      ctrl.setActiveSentenceIndex(idx);
-      if (idx != null) _scrollToSentence(idx);
-    };
+    tts.onHighlightChanged = _handleTtsHighlight;
     tts.onContentCompleted = _handleTtsChapterCompleted;
+  }
+
+  void _handleTtsHighlight(TtsHighlight? highlight) {
+    if (!mounted) return;
+    _controller.setTtsHighlight(highlight);
+    // 翻页模式由 PagedReader 自己翻到高亮那页。
+    if (highlight == null ||
+        _book?.format == 'pdf' ||
+        _controller.readingMode != ReadingMode.scroll) {
+      return;
+    }
+    _scrollControllers[_controller.currentChapterIndex]?.reveal(
+      highlight.focusStart,
+      highlight.focusEnd,
+    );
+  }
+
+  /// 从正在看的地方开始朗读。阅读工具栏、朗读面板、通知栏在没有暂停中的
+  /// 朗读时按播放都走这里。
+  Future<void> _startTtsFromReadingPosition() async {
+    final chapterIndex = _controller.currentChapterIndex;
+    if (chapterIndex < 0 || chapterIndex >= _chapterContents.length) return;
+    final tts = ref.read(ttsServiceProvider);
+    await _prepareTtsForPlayback();
+    if (!mounted || chapterIndex != _controller.currentChapterIndex) return;
+    final content = _readableText(_chapterContents[chapterIndex]);
+    _attachTtsToChapter();
+    final started = await tts.playFromOffset(
+      content,
+      _ttsStartOffset(content),
+    );
+    if (!started && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(tts.lastError ?? '无法启动语音朗读。'),
+          duration: const Duration(seconds: 5),
+        ),
+      );
+    }
+  }
+
+  /// 朗读的起点：屏幕正中那一句的句首。还停在章首时从头读，不然一打开
+  /// 新章就从半屏之下读起，开头那几段被跳过。
+  int _ttsStartOffset(String content) {
+    if (content.isEmpty) return 0;
+    final chapterIndex = _controller.currentChapterIndex;
+    int? center;
+    if (_book?.format != 'pdf') {
+      if (_controller.readingMode == ReadingMode.scroll) {
+        final controller = _scrollControllers[chapterIndex];
+        if (controller != null && controller.isAtTop) return 0;
+        center = controller?.centerCharOffset;
+      } else if (_pageStartsChapter == chapterIndex && _pageStarts.isNotEmpty) {
+        // 翻页模式记的进度就是当前页第一个字。
+        final pageStart = (_controller.scrollPosition * content.length).round();
+        var page = 0;
+        while (page + 1 < _pageStarts.length &&
+            _pageStarts[page + 1] <= pageStart) {
+          page++;
+        }
+        if (page == 0) return 0;
+        final pageEnd = page + 1 < _pageStarts.length
+            ? _pageStarts[page + 1]
+            : content.length;
+        center = (_pageStarts[page] + pageEnd) ~/ 2;
+      }
+    }
+    center ??= (content.length * _controller.scrollPosition).floor();
+    if (center <= 0) return 0;
+    return SentenceSplitter.sentenceStartAt(
+      content,
+      center.clamp(0, content.length).toInt(),
+    );
+  }
+
+  void _handlePagesLaidOut(int chapterIndex, String text, List<int> starts) {
+    if (chapterIndex != _controller.currentChapterIndex) return;
+    _pageStarts = starts;
+    _pageStartsChapter = chapterIndex;
+    // 朗读单位不跨页，翻页才跟得上朗读。
+    _ttsService.setSpeechBreaks(text, starts);
   }
 
   void _syncTtsMediaSessionChapter() {
@@ -1242,7 +1255,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
     final tts = ref.read(ttsServiceProvider);
     if (completedIndex >= _chapters.length - 1) {
       tts.cancelSleepTimer();
-      _controller.setActiveSentenceIndex(null);
+      _controller.setTtsHighlight(null);
       return;
     }
 
@@ -1322,19 +1335,13 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
         return;
       }
 
-      _lastTrackedChapterIndex = targetIndex;
-      _setupTtsSentenceTracking(content);
+      _attachTtsToChapter();
       final normalizedStartOffset =
           startOffset?.clamp(0, content.length).toInt();
       if (normalizedStartOffset != null) {
         final targetPosition =
             content.isEmpty ? 0.0 : normalizedStartOffset / content.length;
-        _controller.setScrollPosition(targetPosition);
-        if (_controller.readingMode == ReadingMode.scroll) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            unawaited(_restoreChapterPosition(targetIndex, targetPosition));
-          });
-        }
+        _restoreChapterPosition(targetIndex, targetPosition);
       }
       await WidgetsBinding.instance.endOfFrame;
       if (!mounted ||
@@ -1371,8 +1378,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
       unawaited(tts.stop());
     }
     _ttsChapterTransitionInProgress = false;
-    _controller.setActiveSentenceIndex(null);
-    _lastTrackedChapterIndex = -1;
+    _controller.setTtsHighlight(null);
   }
 
   String _readableText(String content) {
@@ -1380,23 +1386,6 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
       return EpubParser.stripHtml(content);
     }
     return content;
-  }
-
-  /// Auto-scroll to keep the highlighted sentence visible.
-  void _scrollToSentence(int sentenceIndex) {
-    final ctrl = ref.read(readerControllerProvider(widget.bookId));
-    final total = ctrl.totalSentences;
-    if (total == 0) return;
-    final pos = sentenceIndex / total;
-    final sc = _getScrollController(ctrl.currentChapterIndex);
-    if (!sc.hasClients) return;
-    final maxExtent = sc.position.maxScrollExtent;
-    if (maxExtent <= 0) return;
-    sc.animateTo(
-      maxExtent * pos,
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeOut,
-    );
   }
 
   String? _currentSurroundingText() {
@@ -1499,17 +1488,13 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
       _pdfReaderKey.currentState?.goToPage(_controller.currentChapterIndex);
     } else if (targetPosition != null) {
       if (_controller.readingMode == ReadingMode.scroll) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          unawaited(_restoreChapterPosition(index, targetPosition));
-        });
+        _restoreChapterPosition(index, targetPosition);
       } else {
         _scheduleProgressSave(const Duration(milliseconds: 200));
       }
     } else if (changedChapter &&
         _controller.readingMode == ReadingMode.scroll) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        unawaited(_restoreChapterPosition(index, 0));
-      });
+      _restoreChapterPosition(index, 0);
     }
   }
 
@@ -1784,7 +1769,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
         (controller) => (
           chapterIndex: controller.currentChapterIndex,
           readingMode: controller.readingMode,
-          activeSentenceIndex: controller.activeSentenceIndex,
+          ttsHighlight: controller.ttsHighlight,
         ),
       ),
     );
@@ -1859,33 +1844,14 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
                 _navigationHistory.canGoBack ? _goBackInHistory : null,
             onHistoryForward:
                 _navigationHistory.canGoForward ? _goForwardInHistory : null,
-            onTts: () async {
+            onTts: () {
               final tts = ref.read(ttsServiceProvider);
-              final readableContent = _readableText(content);
-              await _prepareTtsForPlayback();
-              if (!context.mounted) return;
-              if (_lastTrackedChapterIndex != readerState.chapterIndex) {
-                _lastTrackedChapterIndex = readerState.chapterIndex;
-                _setupTtsSentenceTracking(readableContent);
-              }
               if (!tts.isPlaying && !tts.isPaused) {
-                final started = await tts.play(
-                  readableContent,
-                  _controller.scrollPosition,
-                );
-                if (!context.mounted) return;
-                if (!started) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(tts.lastError ?? '无法启动系统语音朗读。'),
-                      duration: const Duration(seconds: 5),
-                    ),
-                  );
-                }
+                // 不等开读：外部语音服务要等第一段合成回来，面板先弹出来，
+                // 读没读起来、出了什么错都在面板里看得到。
+                unawaited(_startTtsFromReadingPosition());
               }
-              if (context.mounted) {
-                _showTtsPanel(readableContent);
-              }
+              _showTtsPanel(_readableText(content));
             },
           ),
           readerBody: Stack(
@@ -1895,7 +1861,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
                   content,
                   chapter,
                   readingMode: readerState.readingMode,
-                  activeSentenceIndex: readerState.activeSentenceIndex,
+                  ttsHighlight: readerState.ttsHighlight,
                 ),
               ),
               _buildNextChapterButton(readerState.chapterIndex),
@@ -1917,13 +1883,13 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
     String content,
     Chapter chapter, {
     required ReadingMode readingMode,
-    required int? activeSentenceIndex,
+    required TtsHighlight? ttsHighlight,
   }) {
     final reader = _buildReaderWidget(
       content,
       chapter,
       readingMode: readingMode,
-      activeSentenceIndex: activeSentenceIndex,
+      ttsHighlight: ttsHighlight,
     );
 
     if (readingMode != ReadingMode.page || _book?.format == 'pdf') {
@@ -1977,27 +1943,25 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
     );
   }
 
-  ScrollController _getScrollController(int chapterIndex) {
-    if (!_scrollControllers.containsKey(chapterIndex)) {
-      final sc = ScrollController();
-      sc.addListener(() {
-        if (sc.hasClients) {
-          final maxScroll = sc.position.maxScrollExtent;
-          final currentScroll = sc.position.pixels;
-          final position = maxScroll > 0 ? currentScroll / maxScroll : 0.0;
-          _onScrollUpdate(position);
-        }
-      });
-      _scrollControllers[chapterIndex] = sc;
-    }
-    return _scrollControllers[chapterIndex]!;
+  ReaderScrollController _getScrollController(int chapterIndex) {
+    return _scrollControllers.putIfAbsent(
+      chapterIndex,
+      () => ReaderScrollController(
+        onReadingPositionChanged: (position) {
+          // 回报在布局之后才发，换章那一帧旧章的回报不能记到新章头上。
+          if (chapterIndex == _controller.currentChapterIndex) {
+            _onScrollUpdate(position);
+          }
+        },
+      ),
+    );
   }
 
   Widget _buildReaderWidget(
     String content,
     Chapter chapter, {
     required ReadingMode readingMode,
-    required int? activeSentenceIndex,
+    required TtsHighlight? ttsHighlight,
   }) {
     final chapterIndex = _controller.currentChapterIndex;
     final readingPreferences =
@@ -2055,6 +2019,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
         pageTurnEffect: readingPreferences.pageTurnEffect,
         initialPosition: _controller.scrollPosition,
         onPositionChanged: _onPagePositionChanged,
+        onPaginated: (starts) =>
+            _handlePagesLaidOut(chapterIndex, pageContent, starts),
         onAdvanceBeyondLast:
             chapterIndex < _chapters.length - 1 ? _goToNext : null,
         onRetreatBeforeFirst: chapterIndex > 0 ? _goToPreviousAtEnd : null,
@@ -2065,7 +2031,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
         onNoteAction: _handleNote,
         locatorHighlightStart: _locatorHighlightStart,
         locatorHighlightEnd: _locatorHighlightEnd,
-        activeSentenceIndex: activeSentenceIndex,
+        ttsHighlight: ttsHighlight,
       );
     }
 
@@ -2088,7 +2054,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
         paragraphIndent: readingPreferences.paragraphIndent,
         topContentPadding: readingPreferences.topContentPadding,
         scrollController: _getScrollController(chapterIndex),
-        activeSentenceIndex: activeSentenceIndex,
+        ttsHighlight: ttsHighlight,
         onAiAction: (text) => _showAiPanel(null, text),
         onTranslateAction: translationEnabled ? _handleTranslation : null,
         onTtsAction: _startTtsFromSelection,
@@ -2117,7 +2083,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
         paragraphIndent: readingPreferences.paragraphIndent,
         topContentPadding: readingPreferences.topContentPadding,
         scrollController: _getScrollController(chapterIndex),
-        activeSentenceIndex: activeSentenceIndex,
+        ttsHighlight: ttsHighlight,
         onAiAction: (text) => _showAiPanel(null, text),
         onTranslateAction: translationEnabled ? _handleTranslation : null,
         onTtsAction: _startTtsFromSelection,
@@ -2245,21 +2211,16 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
     _cancelPositionRestore();
     _controller.setScrollPosition(anchor);
 
-    if (mode == ReadingMode.scroll) {
-      // Suppress the retained ScrollController's old offset until the saved
-      // text anchor has been applied to the newly mounted scroll reader.
-      _restoringScrollPosition = true;
-    }
-
     unawaited(_saveProgress());
     _controller.setReadingMode(mode);
 
     if (mode == ReadingMode.scroll) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        _controller.setScrollPosition(anchor);
-        unawaited(_restoreChapterPosition(chapterIndex, anchor));
-      });
+      // 滚动模式没有页，朗读单位不用再按页断开。
+      _pageStarts = const [];
+      _pageStartsChapter = -1;
+      _ttsService.setSpeechBreaks('', const []);
+      // 两种模式的位置都是字符比例，滚动阅读器挂上后直接定位到同一个字。
+      _restoreChapterPosition(chapterIndex, anchor);
     } else {
       _scheduleProgressSave(const Duration(milliseconds: 200));
     }

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../services/tts_service.dart';
 import '../../widgets/glass_container.dart';
+import 'external_tts_form.dart';
 
 class TtsSettingsPage extends ConsumerWidget {
   const TtsSettingsPage({super.key});
@@ -25,14 +26,19 @@ class TtsSettingsPage extends ConsumerWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          const GlassContainer.stable(
+            padding: EdgeInsets.all(20),
+            child: ExternalTtsForm(),
+          ),
+          const SizedBox(height: 16),
           GlassContainer.stable(
             padding: const EdgeInsets.all(20),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  '系统语音引擎',
-                  style: TextStyle(fontWeight: FontWeight.bold),
+                Text(
+                  tts.usesExternalEngine ? '外部语音服务' : '系统语音引擎',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 12),
                 Row(
@@ -125,12 +131,14 @@ class TtsSettingsPage extends ConsumerWidget {
   }
 
   static String _statusText(TTSService tts) {
+    final voice =
+        tts.usesExternalEngine ? tts.externalSettings.voice : tts.language;
     return switch (tts.status) {
       TTSStatus.initializing => '正在检测系统语音引擎…',
-      TTSStatus.ready => '已就绪（${tts.language}）',
-      TTSStatus.playing => '正在朗读（${tts.language}）',
+      TTSStatus.ready => '已就绪（$voice）',
+      TTSStatus.playing => '正在朗读（$voice）',
       TTSStatus.paused => '朗读已暂停',
-      TTSStatus.error => '系统语音引擎不可用',
+      TTSStatus.error => tts.usesExternalEngine ? '外部语音服务出错' : '系统语音引擎不可用',
     };
   }
 

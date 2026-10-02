@@ -4,12 +4,13 @@ import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import '../../models/tts_highlight.dart';
 import '../../widgets/reader_context_menu.dart';
 import '../../utils/font_utils.dart';
-import '../../utils/sentence_splitter.dart';
 import '../../typography/typesetter.dart';
 import 'format_reader.dart';
 import 'paragraph_layout.dart';
+import 'reader_highlights.dart';
 
 class PagedReader extends FormatReader {
   final String content;
@@ -34,14 +35,19 @@ class PagedReader extends FormatReader {
   final double initialPosition;
   final ValueChanged<double>? onPositionChanged;
   final ValueChanged<int>? onPageChanged;
+
+  /// 分页完成，参数是每页第一个字在正文里的位置。
+  final ValueChanged<List<int>>? onPaginated;
   final VoidCallback? onAdvanceBeyondLast;
   final VoidCallback? onRetreatBeforeFirst;
   final String pageTurnEffect;
   final int? locatorHighlightStart;
   final int? locatorHighlightEnd;
-  final int? activeSentenceIndex;
 
-  PagedReader({
+  /// 听书正在读的位置。不在当前页时自动翻过去。
+  final TtsHighlight? ttsHighlight;
+
+  const PagedReader({
     super.key,
     required this.content,
     this.chapterTitle,
@@ -65,34 +71,14 @@ class PagedReader extends FormatReader {
     this.initialPosition = 0.0,
     this.onPositionChanged,
     this.onPageChanged,
+    this.onPaginated,
     this.onAdvanceBeyondLast,
     this.onRetreatBeforeFirst,
     this.pageTurnEffect = 'curl',
     this.locatorHighlightStart,
     this.locatorHighlightEnd,
-    this.activeSentenceIndex,
+    this.ttsHighlight,
   });
-
-  final GlobalKey<_PagedReaderState> _readerKey =
-      GlobalKey<_PagedReaderState>();
-
-  @override
-  double get currentPosition => _readerKey.currentState?.currentPosition ?? 0.0;
-
-  @override
-  void jumpToPosition(double pos) =>
-      _readerKey.currentState?.jumpToPosition(pos);
-
-  @override
-  Stream<TextSelectionData> get onSelection =>
-      _readerKey.currentState?.onSelection ?? const Stream.empty();
-
-  @override
-  void highlightSentence(int index) =>
-      _readerKey.currentState?.highlightSentence(index);
-
-  @override
-  void clearHighlight() => _readerKey.currentState?.clearHighlight();
 
   @override
   bool get supportsSelection => true;
@@ -110,6 +96,9 @@ class _PagedReaderState extends State<PagedReader> {
   static const _titleBottomSpacing = 24.0;
   static const _chapterBoundaryDelay = Duration(milliseconds: 180);
 
+  /// RenderEditable 的 `_kCaretGap` 加上 SelectableText 默认的 cursorWidth。
+  static const _selectableCaretMargin = 1.0 + 2.0;
+
   late PageController _pageController;
   List<int> _pageOffsets = [];
   int _currentPage = 0;
@@ -122,8 +111,8 @@ class _PagedReaderState extends State<PagedReader> {
   bool _chapterBoundaryRequestPending = false;
   Offset? _pagePointerDownLocal;
   int? _pageTurnOrigin;
-  int? _localActiveSentenceIndex;
-  List<SentenceSpan> _sentences = const [];
+  int? _ttsTurnTarget;
+  List<TextHighlightLayer> _highlightLayers = const [];
 
   bool _isComputingPages = false;
   int _paginationRevision = 0;
@@ -141,30 +130,10 @@ class _PagedReaderState extends State<PagedReader> {
     );
   }
 
-  void jumpToPosition(double pos) {
-    if (_pageOffsets.isEmpty) return;
-    final page = _pageForPosition(pos);
-    if (_pageController.hasClients) {
-      _pageController.jumpToPage(page);
-    }
-  }
-
-  Stream<TextSelectionData> get onSelection => const Stream.empty();
-
-  void highlightSentence(int index) {
-    setState(() => _localActiveSentenceIndex = index);
-    _scheduleActiveSentencePageJump();
-  }
-
-  void clearHighlight() {
-    setState(() => _localActiveSentenceIndex = null);
-  }
-
   @override
   void initState() {
     super.initState();
     _pageController = PageController();
-    _sentences = SentenceSplitter.split(widget.content);
   }
 
   @override
@@ -245,10 +214,11 @@ class _PagedReaderState extends State<PagedReader> {
       _pageTurnOrigin = null;
 
       setState(() {});
+      widget.onPaginated?.call(List.unmodifiable(nextOffsets));
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _pageController.hasClients) {
           _pageController.jumpToPage(startPage);
-          _jumpToActiveSentencePage();
+          _turnToTtsPage();
         }
       });
     } finally {
@@ -301,13 +271,15 @@ class _PagedReaderState extends State<PagedReader> {
 
     final textDirection = Directionality.maybeOf(context) ?? TextDirection.ltr;
     final contentWidth = math.max(1.0, pageWidth - widget.margin * 2);
-    // 行盒高度与渲染端精确一致（见 test/typography/
-    // selectable_text_parity_test.dart），但渲染端对「页文本切片」独立
-    // 断行时，与整章断行存在不可归因的宽度边界微差：中文长页比度量
-    // 多断一行（693 字符：度量 17 行，渲染 18 行），西文按词断行加
-    // 句级 span 拆分时可差两行（500 句拉丁文本实测溢出一行）。该余量
-    // 与旧 layoutSlack 相同，待接管渲染（按行盒渲染、关闭自动换行）
-    // 后可移除。
+    // 正文是 SelectableText，底下的 RenderEditable 排版时先从宽度里扣掉
+    // 光标的位置（1 像素间隙 + 光标宽 2 像素）。度量不扣的话，一行恰好
+    // 排满时渲染端要多断一行：400 宽、18 号字的正文区正好 20 个汉字，
+    // 渲染只放得下 19 个，三位数段号的段落就从两行变三行，一页多出好几行，
+    // 页底的字被挤到页外看不见。标题是普通 Text，不扣。
+    final bodyWidth = math.max(1.0, contentWidth - _selectableCaretMargin);
+    // 两行余量是查出上面那个宽度差之前留的（旧 layoutSlack），那时把它
+    // 当成渲染端「不可归因的断行差异」。宽度对齐之后理论上用不着了，先
+    // 保留，免得这次改动顺带改变每页的字数。
     final pageBodyHeight = math.max(
       1.0,
       pageHeight -
@@ -350,7 +322,7 @@ class _PagedReaderState extends State<PagedReader> {
         final measured = measurer.layout(
           text: measureKey,
           style: _bodyStyle,
-          maxWidth: contentWidth,
+          maxWidth: bodyWidth,
           direction: textDirection,
         );
         final indentLength = indentPrefix.length;
@@ -418,7 +390,13 @@ class _PagedReaderState extends State<PagedReader> {
 
   int _pageForPosition(double position) {
     if (_pageOffsets.length <= 1 || widget.content.isEmpty) return 0;
-    final target = (position.clamp(0.0, 1.0) * widget.content.length).round();
+    return _pageForOffset(
+      (position.clamp(0.0, 1.0) * widget.content.length).round(),
+    );
+  }
+
+  int _pageForOffset(int target) {
+    if (_pageOffsets.length <= 1) return 0;
     var low = 0;
     var high = _pageOffsets.length - 1;
     while (low <= high) {
@@ -437,34 +415,34 @@ class _PagedReaderState extends State<PagedReader> {
     return (_pageOffsets[page] / widget.content.length).clamp(0.0, 1.0);
   }
 
-  void _scheduleActiveSentencePageJump() {
+  void _scheduleTtsPageTurn() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _jumpToActiveSentencePage();
+      if (mounted) _turnToTtsPage();
     });
   }
 
-  void _jumpToActiveSentencePage() {
-    final activeIndex = _localActiveSentenceIndex ?? widget.activeSentenceIndex;
-    if (activeIndex == null ||
-        activeIndex < 0 ||
-        activeIndex >= _sentences.length ||
+  /// 翻到正在读的那一页。有句子就跟句子，否则跟段落开头。
+  void _turnToTtsPage() {
+    final highlight = widget.ttsHighlight;
+    if (highlight == null ||
         _pageOffsets.isEmpty ||
         widget.content.isEmpty ||
         !_pageController.hasClients) {
       return;
     }
-    final sentence = _sentences[activeIndex];
-    final targetPage = _pageForPosition(
-      sentence.startOffset / widget.content.length,
-    );
-    if (targetPage == _currentPage) return;
-    unawaited(
-      _pageController.animateToPage(
-        targetPage,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOutCubic,
-      ),
-    );
+    final targetPage = _pageForOffset(highlight.focusStart);
+    // 引擎逐词报进度时高亮几百毫秒就变一次，正在翻向同一页就别重新起头。
+    if (targetPage == _currentPage || targetPage == _ttsTurnTarget) return;
+    _ttsTurnTarget = targetPage;
+    _pageController
+        .animateToPage(
+      targetPage,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+    )
+        .whenComplete(() {
+      if (_ttsTurnTarget == targetPage) _ttsTurnTarget = null;
+    });
   }
 
   @override
@@ -484,16 +462,13 @@ class _PagedReaderState extends State<PagedReader> {
         oldWidget.chapterTitle != widget.chapterTitle ||
         oldWidget.content != widget.content;
     if (layoutChanged) {
-      if (oldWidget.content != widget.content) {
-        _sentences = SentenceSplitter.split(widget.content);
-        _localActiveSentenceIndex = null;
-      }
       _paginationRevision++;
       _pageHeight = 0; // force recompute
       _pageWidth = 0;
       _pageOffsets = [];
       _currentPage = 0;
       _pageTurnOrigin = null;
+      _ttsTurnTarget = null;
       _paragraphLineCache.clear();
       _cancelChapterBoundaryRequest();
     } else if (oldWidget.initialPosition != widget.initialPosition &&
@@ -506,8 +481,8 @@ class _PagedReaderState extends State<PagedReader> {
         });
       }
     }
-    if (oldWidget.activeSentenceIndex != widget.activeSentenceIndex) {
-      _scheduleActiveSentencePageJump();
+    if (oldWidget.ttsHighlight != widget.ttsHighlight) {
+      _scheduleTtsPageTurn();
     }
   }
 
@@ -571,6 +546,19 @@ class _PagedReaderState extends State<PagedReader> {
   bool _handleScrollNotification(ScrollNotification notification) {
     if (notification is ScrollStartNotification) {
       _pageTurnOrigin ??= _currentPage;
+    } else if (notification is ScrollUpdateNotification) {
+      // 上一页还没停稳就接着翻，一次滚动会跨过整页。origin 还停在已经翻
+      // 过去的那页的话，新翻的这页 delta 恒为 0，只平移不卷。越过整页就
+      // 把 origin 换成刚翻过的那页。
+      final origin = _pageTurnOrigin;
+      final page = _pageController.hasClients ? _pageController.page : null;
+      if (origin != null && page != null) {
+        if (page > origin + 1) {
+          _pageTurnOrigin = page.floor();
+        } else if (page < origin - 1) {
+          _pageTurnOrigin = page.ceil();
+        }
+      }
     } else if (notification is ScrollEndNotification &&
         _pageTurnOrigin != null) {
       // 手指按住一页还在动的翻页时，hold 也会发 ScrollEnd，但页面停在半路。
@@ -671,7 +659,7 @@ class _PagedReaderState extends State<PagedReader> {
                   TextSpan(
                     children: [
                       if (indentPrefix.isNotEmpty) TextSpan(text: indentPrefix),
-                      ..._locatorSpans(
+                      ..._highlightedSpans(
                         matches[i].group(0)!,
                         paragraphStart,
                       ),
@@ -724,44 +712,12 @@ class _PagedReaderState extends State<PagedReader> {
     );
   }
 
-  List<InlineSpan> _locatorSpans(String text, int globalStart) {
-    final locatorStart = widget.locatorHighlightStart;
-    final locatorEnd = widget.locatorHighlightEnd;
-    final activeIndex = _localActiveSentenceIndex ?? widget.activeSentenceIndex;
-    final activeSentence = activeIndex != null &&
-            activeIndex >= 0 &&
-            activeIndex < _sentences.length
-        ? _sentences[activeIndex]
-        : null;
-    final useLocator = locatorStart != null && locatorEnd != null;
-    final highlightStart =
-        useLocator ? locatorStart : activeSentence?.startOffset;
-    final highlightEnd = useLocator ? locatorEnd : activeSentence?.endOffset;
-    final globalEnd = globalStart + text.length;
-    if (highlightStart == null ||
-        highlightEnd == null ||
-        highlightStart >= globalEnd ||
-        highlightEnd <= globalStart) {
-      return [TextSpan(text: text)];
-    }
-
-    final localStart =
-        (highlightStart - globalStart).clamp(0, text.length).toInt();
-    final localEnd =
-        (highlightEnd - globalStart).clamp(localStart, text.length).toInt();
-    return [
-      if (localStart > 0) TextSpan(text: text.substring(0, localStart)),
-      TextSpan(
-        text: text.substring(localStart, localEnd),
-        style: TextStyle(
-          backgroundColor: Theme.of(context)
-              .colorScheme
-              .primary
-              .withValues(alpha: useLocator ? 0.22 : 0.15),
-        ),
-      ),
-      if (localEnd < text.length) TextSpan(text: text.substring(localEnd)),
-    ];
+  List<InlineSpan> _highlightedSpans(String text, int globalStart) {
+    return applyHighlightLayers(
+      [TextSpan(text: text)],
+      globalStart,
+      _highlightLayers,
+    );
   }
 
   Widget _wrapPageTurnEffect(int index, Widget child) {
@@ -863,6 +819,12 @@ class _PagedReaderState extends State<PagedReader> {
 
   @override
   Widget build(BuildContext context) {
+    _highlightLayers = readerHighlightLayers(
+      Theme.of(context).colorScheme,
+      tts: widget.ttsHighlight,
+      locatorStart: widget.locatorHighlightStart,
+      locatorEnd: widget.locatorHighlightEnd,
+    );
     return LayoutBuilder(
       builder: (context, constraints) {
         final mediaSize = MediaQuery.sizeOf(context);

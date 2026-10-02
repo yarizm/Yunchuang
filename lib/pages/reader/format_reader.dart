@@ -1,26 +1,14 @@
 import 'package:flutter/material.dart';
 
-class TextSelectionData {
-  final String text;
-  final int startOffset;
-  final int endOffset;
-  const TextSelectionData({
-    required this.text,
-    required this.startOffset,
-    required this.endOffset,
-  });
-}
-
 enum ReadingMode { scroll, page }
 
+/// 三种正文阅读器的共同基类。
+///
+/// 阅读位置不从这里取：滚动模式由 `ReaderScrollController` 按字符换算，
+/// 翻页模式由 `PagedReader.onPositionChanged` 回报，都是字符比例。
 abstract class FormatReader extends StatefulWidget {
   const FormatReader({super.key});
 
-  double get currentPosition;
-  void jumpToPosition(double pos);
-  Stream<TextSelectionData> get onSelection;
-  void highlightSentence(int index);
-  void clearHighlight();
   bool get supportsSelection;
   bool get supportsPagedMode;
 }

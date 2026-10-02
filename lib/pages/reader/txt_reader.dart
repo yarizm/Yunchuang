@@ -1,11 +1,12 @@
 import '../../models/reading_defaults.dart';
-import 'dart:async';
 import 'package:flutter/material.dart';
-import '../../utils/sentence_splitter.dart';
+import '../../models/tts_highlight.dart';
 import '../../widgets/reader_context_menu.dart';
 import '../../utils/font_utils.dart';
 import 'format_reader.dart';
 import 'paragraph_layout.dart';
+import 'reader_highlights.dart';
+import 'reader_scroll_controller.dart';
 
 class TxtReader extends FormatReader {
   final String content;
@@ -22,7 +23,7 @@ class TxtReader extends FormatReader {
   final int paragraphIndent;
   final double topContentPadding;
   final ScrollController? scrollController;
-  final int? activeSentenceIndex;
+  final TtsHighlight? ttsHighlight;
   final ValueChanged<String>? onAiAction;
   final ValueChanged<String>? onTranslateAction;
   final void Function(String text, int start, int end)? onTtsAction;
@@ -32,9 +33,7 @@ class TxtReader extends FormatReader {
   final int? locatorHighlightStart;
   final int? locatorHighlightEnd;
 
-  final GlobalKey<_TxtReaderState> _readerKey = GlobalKey<_TxtReaderState>();
-
-  TxtReader({
+  const TxtReader({
     super.key,
     required this.content,
     this.chapterTitle,
@@ -50,7 +49,7 @@ class TxtReader extends FormatReader {
     this.paragraphIndent = ReadingDefaults.paragraphIndent,
     this.topContentPadding = ReadingDefaults.topContentPadding,
     this.scrollController,
-    this.activeSentenceIndex,
+    this.ttsHighlight,
     this.onAiAction,
     this.onTranslateAction,
     this.onTtsAction,
@@ -60,24 +59,6 @@ class TxtReader extends FormatReader {
     this.locatorHighlightStart,
     this.locatorHighlightEnd,
   });
-
-  @override
-  double get currentPosition => _readerKey.currentState?.currentPosition ?? 0.0;
-
-  @override
-  void jumpToPosition(double pos) =>
-      _readerKey.currentState?.jumpToPosition(pos);
-
-  @override
-  Stream<TextSelectionData> get onSelection =>
-      _readerKey.currentState?.onSelection ?? const Stream.empty();
-
-  @override
-  void highlightSentence(int index) =>
-      _readerKey.currentState?.highlightSentence(index);
-
-  @override
-  void clearHighlight() => _readerKey.currentState?.clearHighlight();
 
   @override
   bool get supportsSelection => true;
@@ -91,43 +72,33 @@ class TxtReader extends FormatReader {
 
 class _TxtReaderState extends State<TxtReader> {
   static const _targetChunkSize = 1200;
-  final _selectionController = StreamController<TextSelectionData>.broadcast();
   List<_TextChunk> _chunks = const [];
-  List<SentenceSpan> _sentences = const [];
+  List<ReaderTextRange> _chunkRanges = const [];
+  List<TextHighlightLayer> _highlightLayers = const [];
   String _selectedText = '';
   int _selectionStart = -1;
   int _selectionEnd = -1;
 
-  double get currentPosition {
-    final ctrl = widget.scrollController;
-    if (ctrl == null || !ctrl.hasClients) return 0.0;
-    final max = ctrl.position.maxScrollExtent;
-    return max > 0 ? (ctrl.offset / max).clamp(0.0, 1.0) : 0.0;
-  }
-
-  void jumpToPosition(double pos) {
-    final ctrl = widget.scrollController;
-    if (ctrl == null || !ctrl.hasClients) return;
-    ctrl.jumpTo(ctrl.position.maxScrollExtent * pos.clamp(0.0, 1.0));
-  }
-
-  Stream<TextSelectionData> get onSelection => _selectionController.stream;
-
-  int? _localActiveIndex;
-
   @override
   void initState() {
     super.initState();
-    _chunks = _splitIntoChunks(widget.content);
+    _setChunks(_splitIntoChunks(widget.content));
   }
 
   @override
   void didUpdateWidget(TxtReader oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.content != widget.content) {
-      _chunks = _splitIntoChunks(widget.content);
-      _sentences = const [];
+      _setChunks(_splitIntoChunks(widget.content));
     }
+  }
+
+  void _setChunks(List<_TextChunk> chunks) {
+    _chunks = chunks;
+    _chunkRanges = [
+      for (final chunk in chunks)
+        (start: chunk.startOffset, end: chunk.startOffset + chunk.text.length),
+    ];
   }
 
   List<_TextChunk> _splitIntoChunks(String text) {
@@ -178,28 +149,6 @@ class _TxtReaderState extends State<TxtReader> {
       }
     }
     return chunks;
-  }
-
-  SentenceSpan? _activeSentence() {
-    final activeIndex = _localActiveIndex ?? widget.activeSentenceIndex;
-    if (activeIndex == null) return null;
-    if (_sentences.isEmpty) {
-      _sentences = SentenceSplitter.split(widget.content);
-    }
-    if (activeIndex < 0 || activeIndex >= _sentences.length) return null;
-    return _sentences[activeIndex];
-  }
-
-  void highlightSentence(int index) {
-    setState(() {
-      _localActiveIndex = index;
-    });
-  }
-
-  void clearHighlight() {
-    setState(() {
-      _localActiveIndex = null;
-    });
   }
 
   /// Build each paragraph as a separate selectable block so paragraph spacing
@@ -303,59 +252,11 @@ class _TxtReaderState extends State<TxtReader> {
   }
 
   List<InlineSpan> _buildParagraphSpans(_TextParagraph paragraph) {
-    final activeSentence = _activeSentence();
-    final paragraphEnd = paragraph.startOffset + paragraph.text.length;
-    final children = <InlineSpan>[];
-    final locatorStart = widget.locatorHighlightStart;
-    final locatorEnd = widget.locatorHighlightEnd;
-    final useLocator = locatorStart != null &&
-        locatorEnd != null &&
-        locatorStart < paragraphEnd &&
-        locatorEnd > paragraph.startOffset;
-    final globalHighlightStart =
-        useLocator ? locatorStart : activeSentence?.startOffset;
-    final globalHighlightEnd =
-        useLocator ? locatorEnd : activeSentence?.endOffset;
-    if (globalHighlightStart != null &&
-        globalHighlightEnd != null &&
-        globalHighlightStart < paragraphEnd &&
-        globalHighlightEnd > paragraph.startOffset) {
-      final highlightStart = (globalHighlightStart - paragraph.startOffset)
-          .clamp(
-            0,
-            paragraph.text.length,
-          )
-          .toInt();
-      final highlightEnd = (globalHighlightEnd - paragraph.startOffset)
-          .clamp(
-            0,
-            paragraph.text.length,
-          )
-          .toInt();
-      if (highlightStart > 0) {
-        children
-            .add(TextSpan(text: paragraph.text.substring(0, highlightStart)));
-      }
-      children.add(
-        TextSpan(
-          text: paragraph.text.substring(highlightStart, highlightEnd),
-          style: TextStyle(
-            backgroundColor: Theme.of(context)
-                .colorScheme
-                .primary
-                .withValues(alpha: useLocator ? 0.22 : 0.15),
-          ),
-        ),
-      );
-      if (highlightEnd < paragraph.text.length) {
-        children.add(
-          TextSpan(text: paragraph.text.substring(highlightEnd)),
-        );
-      }
-    } else {
-      children.add(TextSpan(text: paragraph.text));
-    }
-    return children;
+    return applyHighlightLayers(
+      [TextSpan(text: paragraph.text)],
+      paragraph.startOffset,
+      _highlightLayers,
+    );
   }
 
   void _handleSelection(
@@ -376,20 +277,9 @@ class _TxtReaderState extends State<TxtReader> {
         _selectionStart = chunk.startOffset + selected.start;
         _selectionEnd = chunk.startOffset + selected.end;
       });
-      _selectionController.add(TextSelectionData(
-        text: _selectedText,
-        startOffset: _selectionStart,
-        endOffset: _selectionEnd,
-      ));
     } else if (_selectedText.isNotEmpty) {
       setState(() => _selectedText = '');
     }
-  }
-
-  @override
-  void dispose() {
-    _selectionController.close();
-    super.dispose();
   }
 
   @override
@@ -399,8 +289,23 @@ class _TxtReaderState extends State<TxtReader> {
         widget.chapterTitle != '全文';
     final topPadding =
         MediaQuery.paddingOf(context).top + widget.topContentPadding;
-    final scrollable = ListView.builder(
-      controller: widget.scrollController,
+    _highlightLayers = readerHighlightLayers(
+      Theme.of(context).colorScheme,
+      tts: widget.ttsHighlight,
+      locatorStart: widget.locatorHighlightStart,
+      locatorEnd: widget.locatorHighlightEnd,
+    );
+    final controller = widget.scrollController;
+    if (controller is ReaderScrollController) {
+      controller.updateLayout(
+        textLength: widget.content.length,
+        ranges: _chunkRanges,
+        leadingItemCount: showTitle ? 1 : 0,
+        topInset: topPadding,
+      );
+    }
+    final list = ListView.builder(
+      controller: controller,
       padding:
           EdgeInsets.fromLTRB(widget.margin, topPadding, widget.margin, 80),
       itemCount: _chunks.length + (showTitle ? 1 : 0),
@@ -428,6 +333,9 @@ class _TxtReaderState extends State<TxtReader> {
         );
       },
     );
+    final scrollable = controller is ReaderScrollController
+        ? HiddenWhileRestoring(controller: controller, child: list)
+        : list;
 
     return Stack(
       children: [

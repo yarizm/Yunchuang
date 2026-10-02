@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yunchuang/database/app_database.dart';
+import 'package:yunchuang/models/tts_highlight.dart';
 import 'package:yunchuang/pages/reader/epub_reader.dart';
 import 'package:yunchuang/pages/reader/format_reader.dart';
 import 'package:yunchuang/pages/reader/paged_reader.dart';
@@ -109,9 +110,9 @@ void main() {
   testWidgets('TXT scroll reader applies adjustable top content padding',
       (tester) async {
     await tester.pumpWidget(
-      MaterialApp(
+      const MaterialApp(
         home: MediaQuery(
-          data: const MediaQueryData(
+          data: MediaQueryData(
             padding: EdgeInsets.only(top: 24),
           ),
           child: Scaffold(
@@ -317,7 +318,7 @@ void main() {
   testWidgets('paged reader applies selected font family to page text',
       (tester) async {
     await tester.pumpWidget(
-      MaterialApp(
+      const MaterialApp(
         home: Scaffold(
           body: PagedReader(
             content: 'Font family should reach rendered text.',
@@ -335,7 +336,7 @@ void main() {
   testWidgets('paged reader first page shows chapter title and body',
       (tester) async {
     await tester.pumpWidget(
-      MaterialApp(
+      const MaterialApp(
         home: Scaffold(
           body: PagedReader(
             chapterTitle: 'Chapter Title',
@@ -378,10 +379,14 @@ void main() {
     expect(targetSpan.style?.backgroundColor, isNotNull);
   });
 
-  testWidgets('paged reader follows and highlights the active TTS sentence',
+  testWidgets('paged reader follows and highlights the TTS paragraph',
       (tester) async {
     final content = List.generate(500, (index) => 'Sentence $index.').join(' ');
-    int? activeSentenceIndex;
+    final paragraphStart = content.indexOf('Sentence 450.');
+    final paragraphEnd = content.indexOf('Sentence 453.');
+    final sentenceStart = content.indexOf('Sentence 451.');
+    final sentenceEnd = sentenceStart + 'Sentence 451.'.length;
+    TtsHighlight? highlight;
     late StateSetter rebuild;
 
     await tester.pumpWidget(
@@ -390,10 +395,7 @@ void main() {
           body: StatefulBuilder(
             builder: (context, setState) {
               rebuild = setState;
-              return PagedReader(
-                content: content,
-                activeSentenceIndex: activeSentenceIndex,
-              );
+              return PagedReader(content: content, ttsHighlight: highlight);
             },
           ),
         ),
@@ -401,7 +403,14 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    rebuild(() => activeSentenceIndex = 450);
+    rebuild(
+      () => highlight = TtsHighlight(
+        paragraphStart,
+        paragraphEnd,
+        sentenceStart: sentenceStart,
+        sentenceEnd: sentenceEnd,
+      ),
+    );
     await tester.pumpAndSettle();
 
     final pageIndicator = tester
@@ -409,16 +418,56 @@ void main() {
         .map((text) => text.data ?? '')
         .firstWhere((text) => RegExp(r'^\d+ / \d+$').hasMatch(text));
     final currentPage = int.parse(pageIndicator.split('/').first.trim());
-    final hasHighlight = tester
+    final shaded = tester
         .widgetList<SelectableText>(find.byType(SelectableText))
         .map((text) => text.textSpan)
         .whereType<TextSpan>()
         .expand((span) => span.children ?? const <InlineSpan>[])
         .whereType<TextSpan>()
-        .any((span) => span.style?.backgroundColor != null);
+        .where((span) => span.style?.backgroundColor != null)
+        .toList();
+    final colors = {for (final span in shaded) span.style!.backgroundColor};
 
     expect(currentPage, greaterThan(1));
-    expect(hasHighlight, isTrue);
+    expect(
+      shaded.map((span) => span.text).join(),
+      content.substring(paragraphStart, paragraphEnd),
+    );
+    // 段落一层浅色，正在读的句子再深一层。
+    expect(colors, hasLength(2));
+    expect(
+      shaded.where((span) => span.text!.contains('Sentence 451.')).single.text,
+      'Sentence 451.',
+    );
+  });
+
+  testWidgets('paged pages fit when a line exactly fills the text width',
+      (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    // 400 宽减两侧 20 边距是 360，18 号字一行正好 20 个字。段落 39 个字
+    // （含两字缩进）按整宽量是两行，SelectableText 扣掉光标位置后是三行。
+    final content = [
+      for (var i = 100; i < 300; i++) '第$i段开头一句。这一段中间还有一句话，稍微长一些。第$i段最后一句。',
+    ].join('\n');
+
+    for (final position in [0.0, 0.3, 0.6, 0.9]) {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: PagedReader(
+              key: ValueKey(position),
+              content: content,
+              initialPosition: position,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull, reason: 'position $position');
+    }
   });
 
   testWidgets('paged reader curl effect paints a page curl overlay',
@@ -523,6 +572,56 @@ void main() {
     expect(curling(1), findsNothing);
     await touch.up();
     await tester.pumpAndSettle();
+  });
+
+  testWidgets('a quick second turn moves the curl onto the newly turning page',
+      (tester) async {
+    final content = List.filled(1200, '仿真翻页效果需要页边阴影和折痕。').join();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PagedReader(content: content, pageTurnEffect: 'curl'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    Finder curling(int index) => find.descendant(
+          of: find.byKey(ValueKey('page_curl_transform-$index')),
+          matching: find.byKey(const ValueKey('page_curl_overlay')),
+        );
+    final controller =
+        tester.widget<PageView>(find.byType(PageView)).controller!;
+    final width = controller.position.viewportDimension;
+    unawaited(
+      controller.animateToPage(
+        1,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.linear,
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 260));
+
+    // 上一页还没停稳就接着往后翻，这一下翻过了第 1 页：卷起来的应该是
+    // 正在翻走的第 1 页，而不是已经翻过去的第 0 页。
+    final touch = await tester.startGesture(
+      tester.getCenter(find.byType(PageView)),
+    );
+    for (var step = 0; step < 3; step++) {
+      await tester.pump(const Duration(milliseconds: 16));
+      await touch.moveBy(Offset(-width * 0.25, 0));
+    }
+    await tester.pump(const Duration(milliseconds: 16));
+
+    expect(controller.page, inExclusiveRange(1.05, 2.0));
+    expect(curling(1), findsOneWidget);
+    expect(curling(0), findsNothing);
+    await touch.up();
+    await tester.pumpAndSettle();
+    expect(curling(1), findsNothing);
+    expect(curling(2), findsNothing);
   });
 
   testWidgets('paged reader plain effect keeps curl overlay disabled',

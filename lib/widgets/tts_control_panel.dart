@@ -11,6 +11,10 @@ class TtsControlPanel extends ConsumerWidget {
   final Future<void> Function()? onPreviousChapter;
   final Future<void> Function()? onNextChapter;
   final Future<void> Function()? onBeforePlay;
+
+  /// 没在读也没暂停时按播放怎么开始。阅读器传「从正在看的地方读」；不传
+  /// 就从进度条的位置读。
+  final Future<void> Function()? onStartPlayback;
   final Future<void> Function(double rate)? onSpeechRateChanged;
   final Future<void> Function(String language)? onLanguageChanged;
   final Future<void> Function(TTSVoice? voice)? onVoiceChanged;
@@ -26,6 +30,7 @@ class TtsControlPanel extends ConsumerWidget {
     this.onPreviousChapter,
     this.onNextChapter,
     this.onBeforePlay,
+    this.onStartPlayback,
     this.onSpeechRateChanged,
     this.onLanguageChanged,
     this.onVoiceChanged,
@@ -122,7 +127,12 @@ class TtsControlPanel extends ConsumerWidget {
             const SizedBox(height: 16),
             _buildSpeedSlider(context, tts),
             const SizedBox(height: 8),
-            if (onLanguageChanged != null) ...[
+            // 语言和声音是系统引擎的设置；外部语音服务的声音在设置页里填。
+            if (tts.usesExternalEngine) ...[
+              _buildExternalEngineRow(context, tts),
+              const SizedBox(height: 4),
+            ],
+            if (onLanguageChanged != null && !tts.usesExternalEngine) ...[
               _buildSettingRow(
                 context,
                 icon: Icons.language_rounded,
@@ -133,7 +143,7 @@ class TtsControlPanel extends ConsumerWidget {
               ),
               const SizedBox(height: 4),
             ],
-            if (onVoiceChanged != null) ...[
+            if (onVoiceChanged != null && !tts.usesExternalEngine) ...[
               _buildSettingRow(
                 context,
                 icon: Icons.record_voice_over_outlined,
@@ -237,6 +247,8 @@ class TtsControlPanel extends ConsumerWidget {
                     if (!resumed && context.mounted) {
                       _showError(context, tts);
                     }
+                  } else if (onStartPlayback != null) {
+                    await onStartPlayback!();
                   } else {
                     await _play(context, tts, tts.progress);
                   }
@@ -319,6 +331,32 @@ class TtsControlPanel extends ConsumerWidget {
         Text('${(tts.speechRate * 2).toStringAsFixed(1)}x',
             style: Theme.of(context).textTheme.bodySmall),
       ],
+    );
+  }
+
+  Widget _buildExternalEngineRow(BuildContext context, TTSService tts) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          const Icon(Icons.cloud_outlined, size: 20),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Text(
+              '外部语音服务',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+          ),
+          Flexible(
+            child: Text(
+              tts.externalSettings.voice,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.end,
+            ),
+          ),
+        ],
+      ),
     );
   }
 

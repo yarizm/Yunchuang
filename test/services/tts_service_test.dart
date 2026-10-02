@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:yunchuang/models/tts_highlight.dart';
 import 'package:yunchuang/services/tts_service.dart';
 
 class _MockFlutterTts extends Mock implements FlutterTts {}
@@ -222,6 +223,145 @@ void main() {
 
     expect(service.sleepTimerOption, TTSSleepTimerOption.off);
     expect(service.sleepTimerDeadline, isNull);
+  });
+
+  group('speaks paragraph by paragraph', () {
+    late List<String> spoken;
+    late TTSService service;
+    late List<TtsHighlight?> highlights;
+    late void Function() completionHandler;
+
+    setUp(() async {
+      spoken = [];
+      when(() => flutterTts.speak(any())).thenAnswer((invocation) async {
+        spoken.add(invocation.positionalArguments.single as String);
+        return 1;
+      });
+      service = TTSService(flutterTts: flutterTts);
+      completionHandler = verify(
+        () => flutterTts.setCompletionHandler(captureAny()),
+      ).captured.single as void Function();
+      highlights = [];
+      service.onHighlightChanged = highlights.add;
+      await service.ensureInitialized();
+    });
+
+    tearDown(() => service.dispose());
+
+    Future<void> complete() async {
+      completionHandler();
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    test('highlights each paragraph and skips punctuation-only ones', () async {
+      const content = '第一段。\n\n* * *\n　　第二段，接着读。';
+      final second = content.indexOf('第二段');
+
+      await service.play(content);
+
+      expect(spoken, ['第一段。']);
+      expect(highlights.last, const TtsHighlight(0, 4));
+      expect(service.currentOffset, 0);
+
+      await complete();
+
+      expect(spoken, ['第一段。', '第二段，接着读。']);
+      expect(highlights.last, TtsHighlight(second, content.length));
+      expect(service.currentOffset, second);
+      expect(service.progress, closeTo(second / content.length, 1e-9));
+
+      await complete();
+
+      expect(highlights.last, isNull);
+      expect(service.progress, 1);
+      expect(service.status, TTSStatus.ready);
+    });
+
+    test('cuts long paragraphs after a sentence end', () async {
+      final content = List.filled(40, '这是一句凑长度用的话。').join();
+
+      await service.play(content);
+      await complete();
+
+      expect(spoken.map((text) => text.length), [297, 143]);
+      expect(spoken.every((text) => text.endsWith('。')), isTrue);
+      expect(spoken.join(), content);
+    });
+
+    test('page breaks keep every unit on one page', () async {
+      const content = '第一句。第二句跨页了。第三句。';
+      service.setSpeechBreaks(content, [content.indexOf('跨')]);
+
+      await service.play(content);
+      await complete();
+      await complete();
+
+      // 跨页那一句单独读，读完就翻到下一页。
+      expect(spoken, ['第一句。', '第二句跨页了。', '第三句。']);
+    });
+
+    test('a fraction starts from the beginning of that sentence', () async {
+      const content = '第一句话。第二句话。';
+
+      await service.play(content, 0.7);
+
+      expect(spoken, ['第二句话。']);
+      expect(service.currentOffset, 5);
+    });
+
+    test('word progress marks the sentence and resume restarts it', () async {
+      const content = '第一句话。第二句话。';
+      await service.play(content);
+      final progress = verify(
+        () => flutterTts.setProgressHandler(captureAny()),
+      ).captured.single as void Function(String, int, int, String);
+
+      progress(content, 6, 7, '二');
+
+      expect(service.currentOffset, 6);
+      expect(
+        service.highlight,
+        const TtsHighlight(0, 10, sentenceStart: 5, sentenceEnd: 10),
+      );
+
+      await service.pause();
+      await service.resume();
+
+      expect(spoken, ['第一句话。第二句话。', '第二句话。']);
+      expect(service.highlight, const TtsHighlight(5, 10));
+    });
+
+    test('resume without word progress restarts the current paragraph',
+        () async {
+      const second = '第二段第一句，这一句写得长一些好凑够字数。第二段第二句也一样长一些。';
+      const content = '第一段。\n$second';
+      await service.play(content);
+      await complete();
+
+      await service.pause();
+      await service.resume();
+
+      expect(spoken, ['第一段。', second, second]);
+    });
+
+    test('short lines are grouped but never across a page start', () async {
+      const lines = ['甲：“嗯。”', '乙：“好。”', '丙：“走吧。”', '丁：“等等。”'];
+      final content = lines.join('\n');
+      // 第三行是下一页的开头。
+      service.setSpeechBreaks(content, [0, content.indexOf('丙')]);
+
+      await service.play(content);
+      await complete();
+
+      expect(spoken, [
+        '${lines[0]}\n${lines[1]}',
+        '${lines[2]}\n${lines[3]}',
+      ]);
+      expect(
+        highlights.whereType<TtsHighlight>().first,
+        TtsHighlight(0, content.indexOf('\n丙')),
+      );
+    });
   });
 
   test('pauses when headphones or Bluetooth audio disconnects', () async {

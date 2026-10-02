@@ -12,14 +12,18 @@ class TtsMediaSession extends BaseAudioHandler {
   TTSService? _tts;
   AsyncCallback? _onPreviousChapter;
   AsyncCallback? _onNextChapter;
+  AsyncCallback? _onStartPlayback;
   bool _hasPreviousChapter = false;
   bool _hasNextChapter = false;
   Timer? _completionTimer;
 
+  /// [onStartPlayback] 是停止之后再按播放时怎么开始，阅读器传「从正在看
+  /// 的地方读」；不传就从上次停下的位置读。
   void attach({
     required TTSService tts,
     AsyncCallback? onPreviousChapter,
     AsyncCallback? onNextChapter,
+    AsyncCallback? onStartPlayback,
   }) {
     if (!identical(_tts, tts)) {
       _tts?.removeListener(_syncPlaybackState);
@@ -28,6 +32,7 @@ class TtsMediaSession extends BaseAudioHandler {
     }
     _onPreviousChapter = onPreviousChapter;
     _onNextChapter = onNextChapter;
+    _onStartPlayback = onStartPlayback;
     _syncPlaybackState();
   }
 
@@ -37,6 +42,7 @@ class TtsMediaSession extends BaseAudioHandler {
     _tts = null;
     _onPreviousChapter = null;
     _onNextChapter = null;
+    _onStartPlayback = null;
     _hasPreviousChapter = false;
     _hasNextChapter = false;
     _completionTimer?.cancel();
@@ -76,12 +82,17 @@ class TtsMediaSession extends BaseAudioHandler {
   @override
   Future<void> play() async {
     final tts = _tts;
-    if (tts == null) return;
+    if (tts == null || tts.isPlaying) return;
     _completionTimer?.cancel();
     if (tts.isPaused) {
       await tts.resume();
+    } else if (tts.status == TTSStatus.error && tts.currentText.isNotEmpty) {
+      // 请求失败过：从失败的那一段重试。
+      await tts.playFromOffset(tts.currentText, tts.currentOffset);
+    } else if (_onStartPlayback != null) {
+      await _onStartPlayback!();
     } else if (tts.currentText.isNotEmpty && tts.progress < 1) {
-      await tts.play(tts.currentText, tts.progress);
+      await tts.playFromOffset(tts.currentText, tts.currentOffset);
     }
   }
 

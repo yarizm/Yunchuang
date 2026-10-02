@@ -14,7 +14,7 @@ void main() {
       (tester) async {
     await _expectFirstParagraphIndent(
       tester,
-      TxtReader(
+      const TxtReader(
         content: '第一段内容。\n第二段内容。',
         paragraphIndent: 2,
       ),
@@ -25,7 +25,7 @@ void main() {
       (tester) async {
     await _expectFirstParagraphIndent(
       tester,
-      EpubReader(
+      const EpubReader(
         content: '<p>第一段内容。</p><p>第二段内容。</p>',
         paragraphIndent: 2,
       ),
@@ -36,7 +36,7 @@ void main() {
       (tester) async {
     await _expectFirstParagraphIndent(
       tester,
-      PagedReader(
+      const PagedReader(
         content: '第一段内容。\n第二段内容。',
         paragraphIndent: 2,
       ),

@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../database/daos/progress_dao.dart';
-import '../../utils/sentence_splitter.dart';
+import '../../models/tts_highlight.dart';
 import 'format_reader.dart';
 
 class ReaderController extends ChangeNotifier {
@@ -20,8 +20,7 @@ class ReaderController extends ChangeNotifier {
   bool _toolbarVisible = true;
   bool _toolbarExpanded = false;
   int _totalReadingSeconds = 0;
-  int? _activeSentenceIndex;
-  List<SentenceSpan>? _currentSentences;
+  TtsHighlight? _ttsHighlight;
   Timer? _readingTimer;
   DateTime? _lastTickTime;
   int? _currentChapterId;
@@ -37,7 +36,9 @@ class ReaderController extends ChangeNotifier {
   bool get toolbarVisible => _toolbarVisible;
   bool get toolbarExpanded => _toolbarExpanded;
   int get totalReadingSeconds => _totalReadingSeconds;
-  int? get activeSentenceIndex => _activeSentenceIndex;
+
+  /// 听书正在读的位置，当前章节正文里的字符坐标。
+  TtsHighlight? get ttsHighlight => _ttsHighlight;
   int? get currentChapterId => _currentChapterId;
 
   /// Overall reading progress across the whole book in [0, 1], combining the
@@ -111,24 +112,11 @@ class ReaderController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setActiveSentenceIndex(int? index) {
-    if (_activeSentenceIndex == index) return;
-    _activeSentenceIndex = index;
+  void setTtsHighlight(TtsHighlight? highlight) {
+    if (_ttsHighlight == highlight) return;
+    _ttsHighlight = highlight;
     notifyListeners();
   }
-
-  void setCurrentSentences(List<SentenceSpan> sentences) {
-    _currentSentences = sentences;
-  }
-
-  /// Return the sentence span at [index], or null if not available.
-  SentenceSpan? getSentenceSpan(int index) {
-    if (_currentSentences == null) return null;
-    if (index < 0 || index >= _currentSentences!.length) return null;
-    return _currentSentences![index];
-  }
-
-  int get totalSentences => _currentSentences?.length ?? 0;
 
   void startReadingTimer() {
     _readingTimer?.cancel();

@@ -68,8 +68,9 @@ class BackupService {
   /// 是为了不留「填了地址和用户名、密码却是空的」这种半配置状态。
   /// 还原后重新填一次即可。
   ///
-  /// 新增存放凭据的偏好键时必须让它落进这里的前缀。
-  static const _credentialKeyPrefixes = ['webdav'];
+  /// 新增存放凭据的偏好键时必须让它落进这里的前缀。`externalTts` 是外部
+  /// 语音服务（`ExternalTtsSettings.keyPrefix`），里面有 API Key。
+  static const _credentialKeyPrefixes = ['webdav', 'externalTts'];
 
   static bool _isCredentialKey(String key) =>
       _credentialKeyPrefixes.any(key.startsWith);
@@ -83,8 +84,7 @@ class BackupService {
     AppDirectoryProvider? appDirectoryProvider,
     Future<SharedPreferences> Function()? preferencesProvider,
   })  : _database = database,
-        _appDirectoryProvider =
-            appDirectoryProvider ?? appDataDirectory,
+        _appDirectoryProvider = appDirectoryProvider ?? appDataDirectory,
         _preferencesProvider =
             preferencesProvider ?? SharedPreferences.getInstance;
 
@@ -214,8 +214,7 @@ class BackupService {
     SharedPreferences prefs, {
     AppDirectoryProvider? appDirectoryProvider,
   }) async {
-    final directoryProvider =
-        appDirectoryProvider ?? appDataDirectory;
+    final directoryProvider = appDirectoryProvider ?? appDataDirectory;
     final File file;
     try {
       final appDir = await directoryProvider();
@@ -510,8 +509,7 @@ class BackupService {
   static Future<RestoreResult> applyPendingRestore({
     AppDirectoryProvider? appDirectoryProvider,
   }) async {
-    final directoryProvider =
-        appDirectoryProvider ?? appDataDirectory;
+    final directoryProvider = appDirectoryProvider ?? appDataDirectory;
     final appDir = await directoryProvider();
     final pendingDir = Directory(p.join(appDir.path, _pendingDirectoryName));
     final legacyPending =

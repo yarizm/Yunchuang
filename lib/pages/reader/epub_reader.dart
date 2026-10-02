@@ -1,15 +1,16 @@
 import '../../models/reading_defaults.dart';
-import 'dart:async';
 import 'dart:developer' as developer;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import '../../models/html_text_document.dart';
+import '../../models/tts_highlight.dart';
 import '../../utils/html_to_textspan.dart';
-import '../../utils/sentence_splitter.dart';
 import '../../widgets/reader_context_menu.dart';
 import '../../utils/font_utils.dart';
 import 'format_reader.dart';
 import 'paragraph_layout.dart';
+import 'reader_highlights.dart';
+import 'reader_scroll_controller.dart';
 
 class EpubReader extends FormatReader {
   final String content;
@@ -25,7 +26,7 @@ class EpubReader extends FormatReader {
   final TextAlign textAlign;
   final int paragraphIndent;
   final double topContentPadding;
-  final int? activeSentenceIndex;
+  final TtsHighlight? ttsHighlight;
   final ValueChanged<String>? onAiAction;
   final ValueChanged<String>? onTranslateAction;
   final void Function(String text, int start, int end)? onTtsAction;
@@ -37,9 +38,7 @@ class EpubReader extends FormatReader {
   final int? locatorHighlightEnd;
   final ValueChanged<HtmlTextLink>? onLinkTap;
 
-  final GlobalKey<_EpubReaderState> _readerKey = GlobalKey<_EpubReaderState>();
-
-  EpubReader({
+  const EpubReader({
     super.key,
     required this.content,
     this.chapterTitle,
@@ -54,7 +53,7 @@ class EpubReader extends FormatReader {
     this.textAlign = TextAlign.start,
     this.paragraphIndent = ReadingDefaults.paragraphIndent,
     this.topContentPadding = ReadingDefaults.topContentPadding,
-    this.activeSentenceIndex,
+    this.ttsHighlight,
     this.onAiAction,
     this.onTranslateAction,
     this.onTtsAction,
@@ -66,24 +65,6 @@ class EpubReader extends FormatReader {
     this.locatorHighlightEnd,
     this.onLinkTap,
   });
-
-  @override
-  double get currentPosition => _readerKey.currentState?.currentPosition ?? 0.0;
-
-  @override
-  void jumpToPosition(double pos) =>
-      _readerKey.currentState?.jumpToPosition(pos);
-
-  @override
-  Stream<TextSelectionData> get onSelection =>
-      _readerKey.currentState?.onSelection ?? const Stream.empty();
-
-  @override
-  void highlightSentence(int index) =>
-      _readerKey.currentState?.highlightSentence(index);
-
-  @override
-  void clearHighlight() => _readerKey.currentState?.clearHighlight();
 
   @override
   bool get supportsSelection => true;
@@ -98,47 +79,15 @@ class EpubReader extends FormatReader {
 class _EpubReaderState extends State<EpubReader> {
   static const _targetChunkSize = 1200;
 
-  final _selectionController = StreamController<TextSelectionData>.broadcast();
   ScrollController? _internalController;
 
   List<_EpubChunk> _chunks = const [];
-  List<SentenceSpan> _sentences = [];
+  List<ReaderTextRange> _chunkRanges = const [];
+  List<TextHighlightLayer> _highlightLayers = const [];
   String _plainText = '';
-  int? _localActiveIndex;
-  String _selectedText = '';
-  int _selectionStart = -1;
-  int _selectionEnd = -1;
   List<GestureRecognizer> _linkRecognizers = [];
 
-  double get currentPosition {
-    final ctrl = widget.scrollController ?? _internalController;
-    if (ctrl == null || !ctrl.hasClients) return 0.0;
-    final max = ctrl.position.maxScrollExtent;
-    return max > 0 ? (ctrl.offset / max).clamp(0.0, 1.0) : 0.0;
-  }
-
-  void jumpToPosition(double pos) {
-    final ctrl = widget.scrollController ?? _internalController;
-    if (ctrl == null || !ctrl.hasClients) return;
-    final max = ctrl.position.maxScrollExtent;
-    ctrl.jumpTo(max * pos.clamp(0.0, 1.0));
-  }
-
-  Stream<TextSelectionData> get onSelection => _selectionController.stream;
-
-  void highlightSentence(int index) {
-    setState(() {
-      _localActiveIndex = index;
-    });
-  }
-
-  void clearHighlight() {
-    setState(() {
-      _localActiveIndex = null;
-    });
-  }
-
-  /// Extract the plain text from rendered spans (for sentence split alignment).
+  /// Extract the plain text from rendered spans (for highlight alignment).
   String _spansToPlainText(List<InlineSpan> spans) {
     final buf = StringBuffer();
     for (final span in spans) {
@@ -152,91 +101,12 @@ class _EpubReaderState extends State<EpubReader> {
     return buf.toString();
   }
 
-  /// Rebuild spans with background highlight applied to spans that overlap
-  /// with the active sentence's character range in the plain text.
   List<InlineSpan> _highlightedSpans(_EpubChunk chunk) {
-    final locatorStart = widget.locatorHighlightStart;
-    final locatorEnd = widget.locatorHighlightEnd;
-    if (locatorStart != null &&
-        locatorEnd != null &&
-        locatorStart < chunk.endOffset &&
-        locatorEnd > chunk.startOffset) {
-      return _applyHighlight(
-        chunk.spans,
-        locatorStart - chunk.startOffset,
-        locatorEnd - chunk.startOffset,
-        alpha: 0.22,
-      );
-    }
-    final activeIdx = _localActiveIndex ?? widget.activeSentenceIndex;
-    if (activeIdx == null || activeIdx < 0 || activeIdx >= _sentences.length) {
-      return chunk.spans;
-    }
-    final sentence = _sentences[activeIdx];
-    if (sentence.startOffset >= chunk.endOffset ||
-        sentence.endOffset <= chunk.startOffset) {
-      return chunk.spans;
-    }
-    return _applyHighlight(
+    return applyHighlightLayers(
       chunk.spans,
-      sentence.startOffset - chunk.startOffset,
-      sentence.endOffset - chunk.startOffset,
+      chunk.startOffset,
+      _highlightLayers,
     );
-  }
-
-  List<InlineSpan> _applyHighlight(
-    List<InlineSpan> spans,
-    int highlightStart,
-    int highlightEnd, {
-    double alpha = 0.15,
-  }) {
-    final highlightColor =
-        Theme.of(context).colorScheme.primary.withValues(alpha: alpha);
-    int charPos = 0;
-    final result = <InlineSpan>[];
-
-    for (final span in spans) {
-      if (span is TextSpan) {
-        final text = span.text ?? '';
-        final spanStart = charPos;
-        final spanEnd = charPos + text.length;
-        charPos = spanEnd;
-
-        if (text.isEmpty ||
-            spanEnd <= highlightStart ||
-            spanStart >= highlightEnd) {
-          result.add(span);
-          continue;
-        }
-
-        final localStart = (highlightStart - spanStart).clamp(0, text.length);
-        final localEnd = (highlightEnd - spanStart).clamp(0, text.length);
-        if (localStart > 0) {
-          result.add(TextSpan(
-            text: text.substring(0, localStart),
-            style: span.style,
-            recognizer: span.recognizer,
-          ));
-        }
-        result.add(TextSpan(
-          text: text.substring(localStart, localEnd),
-          style: (span.style ?? const TextStyle()).copyWith(
-            backgroundColor: highlightColor,
-          ),
-          recognizer: span.recognizer,
-        ));
-        if (localEnd < text.length) {
-          result.add(TextSpan(
-            text: text.substring(localEnd),
-            style: span.style,
-            recognizer: span.recognizer,
-          ));
-        }
-      } else {
-        result.add(span);
-      }
-    }
-    return result;
   }
 
   @override
@@ -260,8 +130,11 @@ class _EpubReaderState extends State<EpubReader> {
         recognizers: _linkRecognizers,
       );
       _plainText = _spansToPlainText(spans);
-      _sentences = SentenceSplitter.split(_plainText);
       _chunks = _splitSpansIntoChunks(spans);
+      _chunkRanges = [
+        for (final chunk in _chunks)
+          (start: chunk.startOffset, end: chunk.endOffset),
+      ];
       WidgetsBinding.instance.addPostFrameCallback((_) {
         for (final recognizer in previousRecognizers) {
           recognizer.dispose();
@@ -426,8 +299,22 @@ class _EpubReaderState extends State<EpubReader> {
     );
     final topPadding =
         MediaQuery.paddingOf(context).top + widget.topContentPadding;
+    _highlightLayers = readerHighlightLayers(
+      theme.colorScheme,
+      tts: widget.ttsHighlight,
+      locatorStart: widget.locatorHighlightStart,
+      locatorEnd: widget.locatorHighlightEnd,
+    );
+    if (controller is ReaderScrollController) {
+      controller.updateLayout(
+        textLength: _plainText.length,
+        ranges: _chunkRanges,
+        leadingItemCount: showTitle ? 1 : 0,
+        topInset: topPadding,
+      );
+    }
 
-    return ListView.builder(
+    final list = ListView.builder(
       controller: controller,
       padding:
           EdgeInsets.fromLTRB(widget.margin, topPadding, widget.margin, 80),
@@ -457,7 +344,6 @@ class _EpubReaderState extends State<EpubReader> {
           indentCount: widget.paragraphIndent,
           startsParagraph: chunk.startsParagraph,
         );
-        final renderedText = '$indentPrefix${chunk.plainText}';
         return RepaintBoundary(
           child: Padding(
             padding: EdgeInsets.only(
@@ -472,12 +358,6 @@ class _EpubReaderState extends State<EpubReader> {
                 ],
               ),
               textAlign: widget.textAlign,
-              onSelectionChanged: (selection, cause) => _handleSelection(
-                selection,
-                chunk,
-                renderedText,
-                indentPrefix.length,
-              ),
               contextMenuBuilder: (context, editableTextState) {
                 return AdaptiveTextSelectionToolbar.buttonItems(
                   anchors: editableTextState.contextMenuAnchors,
@@ -519,35 +399,13 @@ class _EpubReaderState extends State<EpubReader> {
         );
       },
     );
-  }
-
-  void _handleSelection(
-    TextSelection selection,
-    _EpubChunk chunk,
-    String renderedText,
-    int leadingTextLength,
-  ) {
-    if (!selection.isCollapsed) {
-      final selected = readerSelectedRange(
-        renderedText: renderedText,
-        selection: selection,
-        leadingTextLength: leadingTextLength,
-      );
-      if (selected.text.isEmpty) return;
-      _selectedText = selected.text;
-      _selectionStart = chunk.startOffset + selected.start;
-      _selectionEnd = chunk.startOffset + selected.end;
-      _selectionController.add(TextSelectionData(
-        text: _selectedText,
-        startOffset: _selectionStart,
-        endOffset: _selectionEnd,
-      ));
-    }
+    return controller is ReaderScrollController
+        ? HiddenWhileRestoring(controller: controller, child: list)
+        : list;
   }
 
   @override
   void dispose() {
-    _selectionController.close();
     _internalController?.dispose();
     for (final recognizer in _linkRecognizers) {
       recognizer.dispose();

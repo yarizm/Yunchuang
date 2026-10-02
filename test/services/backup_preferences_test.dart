@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yunchuang/database/app_database.dart';
 import 'package:yunchuang/services/backup_service.dart';
+import 'package:yunchuang/services/external_tts.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -81,6 +82,32 @@ void main() {
       for (final key in stored.keys) {
         expect(key.startsWith('webdav'), isFalse, reason: '$key 不该进备份');
       }
+    });
+
+    test('外部语音服务的设置整组不进备份', () async {
+      const secret = 'sk-external-tts-secret';
+      final prefs = await prefsWith({
+        'theme': 'dark',
+        ExternalTtsSettings.enabledKey: true,
+        ExternalTtsSettings.baseUrlKey: 'https://tts.example.com/v1',
+        ExternalTtsSettings.apiKeyKey: secret,
+        ExternalTtsSettings.modelKey: 'tts-1',
+        ExternalTtsSettings.voiceKey: 'alloy',
+      });
+
+      final zipPath = await serviceWith(prefs).exportBackup();
+      final stored = preferencesInZip(zipPath);
+
+      expect(stored['theme'], 'dark');
+      for (final key in stored.keys) {
+        expect(
+          key.startsWith(ExternalTtsSettings.keyPrefix),
+          isFalse,
+          reason: '$key 不该进备份',
+        );
+      }
+      final bytes = File(zipPath).readAsBytesSync();
+      expect(latin1.decode(bytes).contains(secret), isFalse);
     });
 
     // 查整个文件的字节，不只查解析结果——分享出去的是这个 ZIP 本身。
