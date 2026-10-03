@@ -127,6 +127,8 @@ Drift ORM（`drift` + `sqlite3_flutter_libs`），数据库文件 `reading_offli
 
 数据库、书籍、封面、词典、背景图都放在 `appDataDirectory()`（`utils/app_data_directory.dart`）返回的目录下，默认是系统文档目录。设了环境变量 `YUNCHUANG_DATA_DIR` 就用它——README 的截图就是这样在一个空目录 + Gutenberg 公版书上截的，没有碰真实书库。不要在各处直接调 `getApplicationDocumentsDirectory()`，新代码走这个函数（或各 Service 的 `appDirectoryProvider` 注入）。
 
+**偏好不跟着走**：`SharedPreferences` 在 Windows 上固定是 `%APPDATA%\YARIZM\芸窗\shared_preferences.json`，隔离实例和正式安装共用一份（`ai_persona_checkpoints/` 也在那个目录）。手测前先备份这个文件，测完放回去。自动化手测（codex + cua-driver 之类）启动应用必须带着这个环境变量：cua 的 `launch_app` 直接起 exe 不会设它，会打开真实书库——给驱动进程本身设上环境变量，它起的子进程就都继承了。
+
 ## 支持的格式
 
 | 类型 | 格式 | 解析器 | 阅读器 Widget |
