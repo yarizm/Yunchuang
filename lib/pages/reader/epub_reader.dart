@@ -343,6 +343,7 @@ class _EpubReaderState extends State<EpubReader> {
         final indentPrefix = paragraphIndentPrefix(
           indentCount: widget.paragraphIndent,
           startsParagraph: chunk.startsParagraph,
+          paragraphText: chunk.plainText,
         );
         return RepaintBoundary(
           child: Padding(

@@ -191,6 +191,7 @@ class _TxtReaderState extends State<TxtReader> {
     final indentPrefix = paragraphIndentPrefix(
       indentCount: widget.paragraphIndent,
       startsParagraph: paragraph.startsParagraph,
+      paragraphText: paragraph.text,
     );
     final renderedText = '$indentPrefix${paragraph.text}';
 

@@ -4,6 +4,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../models/tts_highlight.dart';
 import '../../widgets/reader_context_menu.dart';
 import '../../utils/font_utils.dart';
@@ -99,6 +100,12 @@ class _PagedReaderState extends State<PagedReader> {
   /// RenderEditable 的 `_kCaretGap` 加上 SelectableText 默认的 cursorWidth。
   static const _selectableCaretMargin = 1.0 + 2.0;
 
+  /// 滚轮攒够这么多纵向距离翻一页。Windows 一格滚轮是「每次滚动行数」
+  /// × 100/3 像素（默认 3 行就是 100），设成 1 行是 33；高精度滚轮会把
+  /// 一格拆成几段小事件，攒够了再翻。
+  static const _wheelTurnThreshold = 30.0;
+  static const _inputTurnDuration = Duration(milliseconds: 300);
+
   late PageController _pageController;
   List<int> _pageOffsets = [];
   int _currentPage = 0;
@@ -112,6 +119,27 @@ class _PagedReaderState extends State<PagedReader> {
   Offset? _pagePointerDownLocal;
   int? _pageTurnOrigin;
   int? _ttsTurnTarget;
+
+  /// 滚轮或按键翻页正在翻向的那页。连着翻时从它接着算，不然上一页还没
+  /// 翻完，下一下又算成翻向同一页。
+  int? _inputTurnTarget;
+  double _wheelDistance = 0;
+
+  /// 鼠标和键盘翻页：PageView 默认不接鼠标拖动（拖动留给选字），纵向滚轮
+  /// 它也不管，只用鼠标的话原本翻不了页。方向键挂在这里而不是全局：焦点
+  /// 在某页正文上时，按键先冒泡到这一层，比应用顶层的文字编辑快捷键先拿到；
+  /// Shift + 方向键不拦，照样扩选文字。
+  late final Map<ShortcutActivator, VoidCallback> _pageTurnKeys = {
+    const SingleActivator(LogicalKeyboardKey.arrowRight): () => _turnPageBy(1),
+    const SingleActivator(LogicalKeyboardKey.arrowDown): () => _turnPageBy(1),
+    const SingleActivator(LogicalKeyboardKey.pageDown): () => _turnPageBy(1),
+    const SingleActivator(LogicalKeyboardKey.space): () => _turnPageBy(1),
+    const SingleActivator(LogicalKeyboardKey.arrowLeft): () => _turnPageBy(-1),
+    const SingleActivator(LogicalKeyboardKey.arrowUp): () => _turnPageBy(-1),
+    const SingleActivator(LogicalKeyboardKey.pageUp): () => _turnPageBy(-1),
+    const SingleActivator(LogicalKeyboardKey.space, shift: true): () =>
+        _turnPageBy(-1),
+  };
   List<TextHighlightLayer> _highlightLayers = const [];
 
   bool _isComputingPages = false;
@@ -212,6 +240,7 @@ class _PagedReaderState extends State<PagedReader> {
           anchor >= 1.0 ? _pageOffsets.length - 1 : _pageForPosition(anchor);
       _currentPage = startPage;
       _pageTurnOrigin = null;
+      _inputTurnTarget = null;
 
       setState(() {});
       widget.onPaginated?.call(List.unmodifiable(nextOffsets));
@@ -315,6 +344,7 @@ class _PagedReaderState extends State<PagedReader> {
         indentCount: widget.paragraphIndent,
         startsParagraph:
             isLogicalParagraphStart(widget.content, paragraph.start),
+        paragraphText: paragraphText,
       );
       final measureKey = '$indentPrefix$paragraphText';
       var paragraphLines = _paragraphLineCache[measureKey];
@@ -469,6 +499,8 @@ class _PagedReaderState extends State<PagedReader> {
       _currentPage = 0;
       _pageTurnOrigin = null;
       _ttsTurnTarget = null;
+      _inputTurnTarget = null;
+      _wheelDistance = 0;
       _paragraphLineCache.clear();
       _cancelChapterBoundaryRequest();
     } else if (oldWidget.initialPosition != widget.initialPosition &&
@@ -599,6 +631,48 @@ class _PagedReaderState extends State<PagedReader> {
     }
   }
 
+  void _handlePointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent) return;
+    final delta = event.scrollDelta;
+    // 横向滚动（触控板左右滑、横向滚轮）还是交给 PageView。
+    if (delta.dy.abs() <= delta.dx.abs()) return;
+    GestureBinding.instance.pointerSignalResolver.register(event, (event) {
+      final dy = (event as PointerScrollEvent).scrollDelta.dy;
+      // 换了方向就从头攒，免得反向滚一下先抵掉之前攒的。
+      if (dy.sign != _wheelDistance.sign) _wheelDistance = 0;
+      _wheelDistance += dy;
+      if (_wheelDistance.abs() < _wheelTurnThreshold) return;
+      // 一个事件最多翻一页：高分辨率滚轮一格的距离再大也只翻一页。
+      final step = _wheelDistance > 0 ? 1 : -1;
+      _wheelDistance = 0;
+      _turnPageBy(step);
+    });
+  }
+
+  /// 鼠标滚轮、键盘翻一页。越过本章两头时交给换章，和手指拖过头一样。
+  void _turnPageBy(int step) {
+    if (_pageOffsets.isEmpty || !_pageController.hasClients) return;
+    final target = (_inputTurnTarget ?? _currentPage) + step;
+    if (target < 0) {
+      _requestRetreatBeforeFirst();
+      return;
+    }
+    if (target >= _pageOffsets.length) {
+      _requestAdvanceBeyondLast();
+      return;
+    }
+    _inputTurnTarget = target;
+    _pageController
+        .animateToPage(
+      target,
+      duration: _inputTurnDuration,
+      curve: Curves.easeInOut,
+    )
+        .whenComplete(() {
+      if (_inputTurnTarget == target) _inputTurnTarget = null;
+    });
+  }
+
   Widget _buildPage(int index, int pageCount) {
     final start = _pageOffsets[index];
     final end =
@@ -650,6 +724,7 @@ class _PagedReaderState extends State<PagedReader> {
                   widget.content,
                   paragraphStart,
                 ),
+                paragraphText: matches[i].group(0)!,
               );
               return Padding(
                 padding: EdgeInsets.only(
@@ -849,33 +924,42 @@ class _PagedReaderState extends State<PagedReader> {
           children: [
             SizedBox(
               height: pageHeight,
-              child: Listener(
-                behavior: HitTestBehavior.translucent,
-                onPointerDown: _handlePagePointerDown,
-                onPointerCancel: _handlePagePointerCancel,
-                onPointerUp: _handlePagePointerUp,
-                child: NotificationListener<ScrollNotification>(
-                  onNotification: _handleScrollNotification,
-                  child: PageView.builder(
-                    controller: _pageController,
-                    itemCount: pageCount,
-                    scrollDirection: Axis.horizontal,
-                    physics: const PageScrollPhysics(),
-                    onPageChanged: (page) {
-                      if (mounted) {
-                        setState(() => _currentPage = page);
-                      } else {
-                        _currentPage = page;
-                      }
-                      widget.onPageChanged?.call(page);
-                      widget.onPositionChanged?.call(_positionForPage(page));
-                    },
-                    itemBuilder: (context, index) {
-                      return _wrapPageTurnEffect(
-                        index,
-                        _buildPage(index, pageCount),
-                      );
-                    },
+              child: CallbackShortcuts(
+                bindings: _pageTurnKeys,
+                // 没点过正文时焦点就在这里，按键也能翻页。
+                child: Focus(
+                  autofocus: true,
+                  child: Listener(
+                    behavior: HitTestBehavior.translucent,
+                    onPointerDown: _handlePagePointerDown,
+                    onPointerCancel: _handlePagePointerCancel,
+                    onPointerUp: _handlePagePointerUp,
+                    onPointerSignal: _handlePointerSignal,
+                    child: NotificationListener<ScrollNotification>(
+                      onNotification: _handleScrollNotification,
+                      child: PageView.builder(
+                        controller: _pageController,
+                        itemCount: pageCount,
+                        scrollDirection: Axis.horizontal,
+                        physics: const PageScrollPhysics(),
+                        onPageChanged: (page) {
+                          if (mounted) {
+                            setState(() => _currentPage = page);
+                          } else {
+                            _currentPage = page;
+                          }
+                          widget.onPageChanged?.call(page);
+                          widget.onPositionChanged
+                              ?.call(_positionForPage(page));
+                        },
+                        itemBuilder: (context, index) {
+                          return _wrapPageTurnEffect(
+                            index,
+                            _buildPage(index, pageCount),
+                          );
+                        },
+                      ),
+                    ),
                   ),
                 ),
               ),
