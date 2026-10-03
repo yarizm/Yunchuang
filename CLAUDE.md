@@ -62,6 +62,10 @@ Database (SQLite via Drift ORM + FTS5 全文搜索)
 
 **分页度量要扣光标位**：翻页模式的正文是 `SelectableText`，底下的 `RenderEditable` 排版前先从宽度里扣掉 3 像素（1 像素间隙 + 2 像素光标宽）。`paged_reader` 量行时用同样的宽度；不扣的话一行恰好排满时渲染端要多断一行，一页多出好几行，页底的字被挤出页外、翻页后也看不到。之前的「两行余量」就是为这个没查清的差异留的，现在保留只是为了不顺带改变每页字数。标题是普通 `Text`，不扣。
 
+**翻页模式的鼠标和键盘**：PageView 默认不接鼠标拖动（拖动留给选字），纵向滚轮它也不管，所以 `PagedReader` 自己处理——滚轮在翻页区的 `Listener.onPointerSignal` 里累计到 30 像素翻一页（Windows 一格默认 100），横向滚动仍交给 PageView；方向键、PageUp/PageDown、空格用包在翻页区外的 `CallbackShortcuts`。**快捷键不能挂成全局的，也不能挂在应用顶层**：点过正文后焦点在那页的 SelectableText 上，方向键会被应用顶层的 `DefaultTextEditingShortcuts` 拿去挪光标；挂在翻页区这一层，按键冒泡时先到这里。Shift + 方向键不拦，留给扩选文字。见 `test/pages/paged_reader_input_test.dart`。
+
+**段首缩进只补不足的部分**（`paragraphIndentPrefix`）：中文 TXT 常见每段自带两个全角空格，分章时整章 trim 又只去掉了第一段的，照加缩进就成了「每章第一段两格、后面四格」。原文一个字不动，前缀按原文已有的缩进少加，字符偏移不受影响。度量和渲染必须传同一段文本。
+
 正文 Reader 只把系统安全区与用户配置的「正文顶部留白」计入内容 inset。沉浸式工具栏是覆盖层，不再把整段工具栏高度注入 `MediaQuery`；否则用户将留白调为 0 时仍会看到一段无法解释的空白。
 
 阅读进度持久化由 `ProgressDao` 负责，章节切换、滚动防抖、退出时保存位置等逻辑在 `reader_page.dart` 中协调。
@@ -207,7 +211,7 @@ UI 在 `widgets/ai_chat_panel.dart`（阅读器内嵌）和 `pages/ai/ai_chat_pa
 
 ## 测试
 
-118 个测试文件，覆盖 database / models / pages / parsers / providers / services / utils / widgets。提交前应确保 `flutter analyze` 无告警、`flutter test` 全绿。
+120 个测试文件，覆盖 database / models / pages / parsers / providers / services / utils / widgets。提交前应确保 `flutter analyze` 无告警、`flutter test` 全绿。
 
 性能相关测试（`reader_performance_test.dart`、`home_shelf_performance_test.dart`）约束重建次数，修改阅读器或书架渲染逻辑时容易触发失败，需认真对待而非直接调整阈值。另见 `PERFORMANCE.md`。
 
