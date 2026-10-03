@@ -100,17 +100,114 @@ class TxtParser {
     return chapters.isEmpty ? [_fallbackChapter(normalized)] : chapters;
   }
 
-  /// Extract metadata (title, author) from text.
-  static ParsedMetadata parseMetadata(String text) {
-    final lines = _normalize(text)
-        .split('\n')
-        .map((line) => line.trim())
-        .where((line) => line.isNotEmpty)
-        .toList();
-    final title = lines.isNotEmpty ? lines[0] : '未知书名';
-    final author = lines.length > 1 ? lines[1] : '';
-    return ParsedMetadata(title: title, author: author);
+  /// 书名和作者。TXT 没有元数据，只能从第一章之前的几行猜：
+  ///
+  /// - 书名取第一行像样的文字：跳过纯分隔线（`------`、`＊＊＊`），去掉
+  ///   「书名：」和书名号。开头就是章节标题、第一行像正文，都用
+  ///   [fallbackTitle]（导入时传文件名）。
+  /// - 作者先找带标签的行（作者：、著者：、文/、Author:，书名后面的
+  ///   by …），去掉标签。没有标签再看书名下一行：短、不像正文、也不是别的
+  ///   「键：值」，才当作者。都不像就留空——宁可空着，也不要把正文或章节
+  ///   标题当成作者。
+  static ParsedMetadata parseMetadata(
+    String text, {
+    String fallbackTitle = '未知书名',
+  }) {
+    final header = _headerLines(_normalize(text));
+    var title = '';
+    var titleIndex = -1;
+    for (var index = 0; index < header.length; index++) {
+      final line = header[index];
+      if (_isSeparatorLine(line) || _labeledAuthor(line) != null) continue;
+      final candidate = _cleanTitle(line);
+      if (candidate.isNotEmpty && !_looksLikeBody(candidate)) {
+        title = candidate;
+        titleIndex = index;
+      }
+      break;
+    }
+
+    String? author;
+    for (final line in header) {
+      author = _labeledAuthor(line);
+      if (author != null) break;
+    }
+    if (author == null && titleIndex >= 0) {
+      for (final line in header.skip(titleIndex + 1)) {
+        author = _byAuthor.firstMatch(line)?.group(1)?.trim();
+        if (author != null) break;
+      }
+      if (author == null && titleIndex + 1 < header.length) {
+        final next = header[titleIndex + 1];
+        if (_looksLikeBareAuthor(next)) author = next;
+      }
+    }
+
+    return ParsedMetadata(
+      title: title.isEmpty ? fallbackTitle : title,
+      author: author ?? '',
+    );
   }
+
+  static final RegExp _authorLabel = RegExp(
+    r'^(?:作\s*者|著\s*者|作者名|原\s*著|author|written\s+by)\s*[:：]\s*(.+)$'
+    r'|^文\s*[/／:：]\s*(.+)$',
+    caseSensitive: false,
+  );
+  static final RegExp _byAuthor = RegExp(r'^by\s+(.+)$', caseSensitive: false);
+  static final RegExp _titleLabel = RegExp(
+    r'^(?:书名|書名|标题|標題|title)\s*[:：]\s*',
+    caseSensitive: false,
+  );
+  static final RegExp _bookTitleMarks = RegExp(r'^[《〈「『【](.+)[》〉」』】]$');
+  static final RegExp _separatorLine = RegExp(
+    r'^[\p{P}\p{S}\s]+$',
+    unicode: true,
+  );
+  static final RegExp _sectionWord = RegExp(r'(简介|介绍|提要|文案|目录|正文|前言|序言)$');
+
+  /// 第一个章节标题之前的非空行，最多 8 行。只认带「第」的强标题、英文
+  /// Chapter 和序章、楔子这类：「三部曲」这种书名不能被当成标题截断。
+  static List<String> _headerLines(String text) {
+    final lines = <String>[];
+    for (final raw in text.split('\n')) {
+      final line = raw.trim();
+      if (line.isEmpty) continue;
+      if (lines.length >= 8 ||
+          (line.length <= 80 &&
+              (_strongExplicitHeadingPattern.hasMatch(line) ||
+                  _englishHeadingPattern.hasMatch(line) ||
+                  _specialHeadingPattern.hasMatch(line)))) {
+        break;
+      }
+      lines.add(line);
+    }
+    return lines;
+  }
+
+  static bool _isSeparatorLine(String line) => _separatorLine.hasMatch(line);
+
+  static String? _labeledAuthor(String line) {
+    final match = _authorLabel.firstMatch(line);
+    if (match == null) return null;
+    final value = (match.group(1) ?? match.group(2) ?? '').trim();
+    return value.isEmpty || value.length > 40 ? null : value;
+  }
+
+  static String _cleanTitle(String line) {
+    final unlabeled = line.replaceFirst(_titleLabel, '').trim();
+    return (_bookTitleMarks.firstMatch(unlabeled)?.group(1) ?? unlabeled)
+        .trim();
+  }
+
+  static bool _looksLikeBody(String line) =>
+      line.length > 80 || line.contains(RegExp('[。！？]'));
+
+  static bool _looksLikeBareAuthor(String line) =>
+      line.length <= 20 &&
+      !_isSeparatorLine(line) &&
+      !_sectionWord.hasMatch(line) &&
+      !line.contains(RegExp(r'[。！？!?：:，,]'));
 
   static String _normalize(String text) {
     return text

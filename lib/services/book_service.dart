@@ -244,9 +244,14 @@ class BookService {
             destPath,
             normalizeToUtf8: true,
           );
+          // 开头猜不出书名时用文件名，比把章节标题或分隔线当书名强。
+          final fallbackTitle = p.basenameWithoutExtension(analysis.sourcePath);
           final result = await Isolate.run(() {
             return (
-              metadata: TxtParser.parseMetadata(content),
+              metadata: TxtParser.parseMetadata(
+                content,
+                fallbackTitle: fallbackTitle,
+              ),
               chapters: TxtParser.parseChapters(content),
             );
           });

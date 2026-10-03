@@ -288,4 +288,57 @@ This is the second chapter.
       expect(meta.author, '作者名');
     });
   });
+
+  group('parseMetadata', () {
+    ({String title, String author}) parse(String text) {
+      final meta = TxtParser.parseMetadata(text, fallbackTitle: '文件名');
+      return (title: meta.title, author: meta.author);
+    }
+
+    test('strips the label from an author line', () {
+      expect(
+        parse('测试长篇\n\n作者：手测样书\n\n第一章 雨巷\n正文。'),
+        (title: '测试长篇', author: '手测样书'),
+      );
+      expect(parse('书名\n作者: 某人\n第一章 开始').author, '某人');
+      expect(parse('书名\n作 者：某人\n第一章 开始').author, '某人');
+      expect(parse('书名\n文/某人\n第一章 开始').author, '某人');
+      // 作者行前面隔着别的信息也能找到。
+      expect(parse('书名\n类型：玄幻\n作者：乙\n第一章 开始').author, '乙');
+    });
+
+    test('leaves the author empty when nothing looks like one', () {
+      // 第二行就是章节标题：不能当作者。
+      expect(parse('我的书名\n第一章 开始\n正文。'), (title: '我的书名', author: ''));
+      // 第二行是正文。
+      expect(parse('我的书名\n他推开门，屋里没有人。\n').author, '');
+      // 别的「键：值」信息、栏目名不是作者。
+      expect(parse('我的书名\n类型：玄幻\n第一章 开始').author, '');
+      expect(parse('我的书名\n内容简介\n一段简介。').author, '');
+    });
+
+    test('skips separators and book title marks for the title', () {
+      expect(
+        parse('------------\n《真正的书名》\n作者：甲\n第一章 开始'),
+        (title: '真正的书名', author: '甲'),
+      );
+      expect(parse('书名：三体\n作者：刘慈欣').title, '三体');
+      // 「三部曲」里的「三部」不能被当成卷标题截断。
+      expect(parse('三部曲\n作者：某人\n第一章 开始').title, '三部曲');
+    });
+
+    test('falls back to the file name when the text opens with a chapter', () {
+      expect(parse('第一章 开始\n正文。'), (title: '文件名', author: ''));
+      expect(parse('楔子\n正文。').title, '文件名');
+      expect(parse('').title, '文件名');
+      expect(parse('他推开门，屋里没有人。\n第一章 开始').title, '文件名');
+    });
+
+    test('reads an English "by" line after the title', () {
+      expect(
+        parse('The Time Machine\nby H. G. Wells\n\nChapter 1\nText.'),
+        (title: 'The Time Machine', author: 'H. G. Wells'),
+      );
+    });
+  });
 }
