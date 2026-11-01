@@ -148,6 +148,10 @@ Drift ORM（`drift` + `sqlite3_flutter_libs`），数据库文件 `reading_offli
 
 所有笔记导入器输出统一的 `ImportedNote` 模型。
 
+**TXT 分章**（`parsers/txt_parser.dart`）先认「强标题」（`第一章 开始`：章节标记后紧跟分隔符或行尾）。一本书里强标题 ≥ 2 个时，不再接受没有分隔符的弱匹配——正文里「第三章的内容……」这种句子会把一章劈成两半，还会造出没有正文的空章。弱标题书（`第一章开始`）改用另一组判据：带句号、分号、引号，或者标记后直接接「的/里/中/内容」这类叙述词的，都不算标题。只有标题、没有正文的块在解析时丢弃（整本都没有正文时保留），卷首目录因此不会变成一串空章。
+
+**空章节不是加载中**：`ReaderPage` 把「数据库里读出来是空串」和「还没读出来」分开记（`_emptyChapterIndexes`），前者显示「本章暂无正文」和翻页按钮，后者才转圈。之前一律当加载中，作者把两个章节标题连着写时那一章会永远转圈。见 `test/pages/reader_empty_chapter_test.dart`。
+
 **EPUB 正文转文本**（`models/html_text_document.dart`）按 HTML 的空白规则走：源码里的换行折成一个空格，两边都是汉字时连空格也不要（浏览器的段落分隔符规则），只有 `<pre>` 里的换行才保留；段落边界只认 `<p>`/`<br>`/块级元素。Gutenberg 一类 EPUB 的 XHTML 按固定宽度硬换行，之前把换行当换行，每一行都成了一段。
 
 **EPUB 封面**按规范找：EPUB3 的 `properties="cover-image"`、EPUB2 的 `<meta name="cover">` 指向的 manifest 项，都没有再退到文件名带 cover 的图（`EpubParser.findCoverBytes`）。之前依赖 epubx 的 `CoverImage`，它只认 EPUB2 且要把图解码一遍，而且拿到之后取的是 `Images` 里的第一张——插图本的封面会变成随便哪张插图。
