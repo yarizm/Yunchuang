@@ -77,6 +77,12 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
   String? _error;
   bool _isBookmarked = false;
   final Set<int> _loadedPdfTextPages = {};
+
+  /// 已确认没有正文的章节（数据库里存的是空串，不是「还没读出来」）。
+  ///
+  /// 正文为空不能一律当成加载中：作者把两个章节标题连着写、中间漏了正文，
+  /// 或者卷首目录只剩标题时，那一章会永远停在转圈上。见 `_preloadAdjacentChapters`。
+  final Set<int> _emptyChapterIndexes = {};
   bool _exitInProgress = false;
   bool _allowPop = false;
   int _chapterTransitionDirection = 1;
@@ -197,7 +203,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
         setState(() {
           _book = readerData.book;
           _chapters = readerData.chapters;
-          _chapterContents = readerData.chapterContents;
+          _chapterContents = List.of(readerData.chapterContents);
+          _emptyChapterIndexes.clear();
           _loading = false;
         });
         _controller.chapterCount = _chapters.length;
@@ -306,6 +313,11 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
       final cached = await dao.getChapterContent(_chapters[centerIndex].id);
       if (cached != null) {
         _chapterContents[centerIndex] = cached;
+        if (cached.isEmpty) {
+          _emptyChapterIndexes.add(centerIndex);
+        } else {
+          _emptyChapterIndexes.remove(centerIndex);
+        }
         if (mounted && _controller.currentChapterIndex == centerIndex) {
           setState(() {});
         }
@@ -1957,6 +1969,32 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
     );
   }
 
+  /// 空章节不是「还在加载」：给一句说明和下一步出口，而不是一直转圈。
+  Widget _buildEmptyChapter(Chapter chapter, int chapterIndex) {
+    final hasNext = chapterIndex < _chapters.length - 1;
+    final hasPrevious = chapterIndex > 0;
+    return EmptyState(
+      icon: Icons.article_outlined,
+      title: '本章暂无正文',
+      subtitle: hasNext
+          ? '「${chapter.title}」标题后没有内容，可以继续翻到下一章。'
+          : '「${chapter.title}」标题后没有内容，这已经是最后一章。',
+      action: hasNext
+          ? FilledButton.icon(
+              onPressed: _goToNext,
+              icon: const Icon(Icons.arrow_forward),
+              label: const Text('下一章'),
+            )
+          : hasPrevious
+              ? OutlinedButton.icon(
+                  onPressed: _goToPreviousAtEnd,
+                  icon: const Icon(Icons.arrow_back),
+                  label: const Text('上一章'),
+                )
+              : null,
+    );
+  }
+
   Widget _buildReaderWidget(
     String content,
     Chapter chapter, {
@@ -1994,7 +2032,10 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
     }
 
     if (content.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
+      if (!_emptyChapterIndexes.contains(chapterIndex)) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      return _buildEmptyChapter(chapter, chapterIndex);
     }
 
     if (readingMode == ReadingMode.page) {
