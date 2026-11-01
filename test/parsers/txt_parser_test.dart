@@ -287,6 +287,133 @@ This is the second chapter.
       expect(meta.title, '我的书名');
       expect(meta.author, '作者名');
     });
+
+    test('does not split on a sentence that starts with 第X章', () {
+      const text = '''
+第一章 初见
+他推开门。
+
+第三章的内容很精彩，让人停不下来。
+
+第二章 再会
+她笑了。
+
+第三章 结局
+天亮了。''';
+
+      final chapters = TxtParser.parseChapters(text);
+      expect(chapters.map((chapter) => chapter.title), [
+        '第一章 初见',
+        '第二章 再会',
+        '第三章 结局',
+      ]);
+      expect(chapters.first.content, contains('第三章的内容很精彩'));
+      expect(chapters.every((chapter) => chapter.content.isNotEmpty), isTrue);
+    });
+
+    test('does not split when a weak heading book mentions 第X章 in prose', () {
+      const text = '''
+第一章开始
+正文一。
+
+第二章里，作者写了很多细节。
+
+第二章继续
+正文二。''';
+
+      final chapters = TxtParser.parseChapters(text);
+      expect(chapters.map((chapter) => chapter.title), [
+        '第一章开始',
+        '第二章继续',
+      ]);
+      expect(chapters.first.content, contains('第二章里，作者写了很多细节'));
+    });
+
+    test('accepts weak headings split into 上/中/下 parts', () {
+      const text = '''
+第一章上
+正文一。
+
+第一章中
+正文二。
+
+第一章下
+正文三。''';
+
+      final chapters = TxtParser.parseChapters(text);
+      expect(chapters.map((chapter) => chapter.title), [
+        '第一章上',
+        '第一章中',
+        '第一章下',
+      ]);
+    });
+
+    test('does not split on a 完 that ends an ordinary verb', () {
+      const text = '''
+第一章 初见
+他终于读完了第三章，合上书。
+
+第二章 再会
+她笑了。''';
+
+      final chapters = TxtParser.parseChapters(text);
+      expect(chapters.map((chapter) => chapter.title), [
+        '第一章 初见',
+        '第二章 再会',
+      ]);
+      expect(chapters.first.content, contains('读完了第三章'));
+    });
+
+    test('drops table-of-contents headings that have no body', () {
+      const text = '''
+第一章 初见
+第二章 再会
+第三章 结局
+
+第一章 初见
+他推开门。
+
+第二章 再会
+她笑了。
+
+第三章 结局
+天亮了。''';
+
+      final chapters = TxtParser.parseChapters(text);
+      expect(chapters.map((chapter) => chapter.title), [
+        '第一章 初见',
+        '第二章 再会',
+        '第三章 结局',
+      ]);
+      expect(chapters.map((chapter) => chapter.content), [
+        '他推开门。',
+        '她笑了。',
+        '天亮了。',
+      ]);
+    });
+
+    test('keeps headings without body when the whole book has no body', () {
+      const text = '第一章 初见\n第二章 再会\n第三章 结局';
+      final chapters = TxtParser.parseChapters(text);
+      expect(chapters.map((chapter) => chapter.title), [
+        '第一章 初见',
+        '第二章 再会',
+        '第三章 结局',
+      ]);
+      expect(chapters.every((chapter) => chapter.content.isEmpty), isTrue);
+    });
+
+    test('accepts headings that end with a lone full stop', () {
+      const text = '''
+第一章。
+正文一。
+
+第二章。
+正文二。''';
+
+      final chapters = TxtParser.parseChapters(text);
+      expect(chapters.map((chapter) => chapter.title), ['第一章。', '第二章。']);
+    });
   });
 
   group('parseMetadata', () {

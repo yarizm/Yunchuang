@@ -62,6 +62,16 @@ class TxtParser {
     r'^(序章|序言|前言|楔子|引子|终章|尾声|后记|番外(?:篇)?|附录)$',
   );
 
+  /// 标题后面直接跟这些词，说明这一行是正文在提「第几章」，不是标题。
+  ///
+  /// 只用于没有分隔符的弱标题（「第一章开始」这种写法）：真标题后面接的
+  /// 是书名或小标题，「第一章里/中的/的内容」则是叙述。
+  static final RegExp _proseContinuation = RegExp(
+    r'^(的|里|中|内|时|后|前|上|下|内容|情节|故事|讲述|描写|讲到|写的|说的|所|说|讲|写|是|让|把|被|和|与|及|等|之|节)',
+  );
+
+  static final RegExp _headingMarkerAtEnd = RegExp(r'[章节话回篇卷部集册]$');
+
   /// Parse text into chapters by detecting chapter heading patterns.
   static List<ParsedChapter> parseChapters(String text) {
     final normalized = _normalize(text);
@@ -73,6 +83,7 @@ class TxtParser {
     }
 
     final chapters = <ParsedChapter>[];
+    final blocks = <({String title, String content})>[];
     for (var index = 0; index < selected.length; index++) {
       final start = selected[index].start;
       final end = index + 1 < selected.length
@@ -88,10 +99,21 @@ class TxtParser {
           (firstNewline > 0 ? block.substring(0, firstNewline) : block).trim();
       final content =
           firstNewline > 0 ? block.substring(firstNewline).trim() : '';
+      blocks.add((title: title, content: content));
+    }
+
+    // 只有标题、没有正文的块：常见于卷首目录，或者作者把两个章节标题连着
+    // 写、中间漏了正文。它们单独成章没有意义——打开就是一页空白，还容易和
+    // 后面的真章节重名。整本书都没有正文时例外，至少把标题留下来。
+    final hasBody = blocks.any((block) => block.content.trim().isNotEmpty);
+    final kept = hasBody
+        ? blocks.where((block) => block.content.trim().isNotEmpty)
+        : blocks;
+    for (final block in kept) {
       chapters.add(
         ParsedChapter(
-          title: title.isEmpty ? '第${chapters.length + 1}章' : title,
-          content: content,
+          title: block.title.isEmpty ? '第${chapters.length + 1}章' : block.title,
+          content: block.content,
           sortOrder: chapters.length,
         ),
       );
@@ -227,30 +249,39 @@ class TxtParser {
       final explicit =
           line.length <= 80 ? _explicitHeadingPattern.firstMatch(line) : null;
       if (explicit != null) {
-        if (!_looksLikeEndMarker(explicit.group(3))) {
+        final strong = _strongExplicitHeadingPattern.hasMatch(line);
+        final suffix = explicit.group(3) ?? '';
+        if (!_looksLikeEndMarker(suffix) &&
+            !_looksLikeProseTitledLine(suffix, strong: strong)) {
           candidates.add(
             _HeadingCandidate(
               start: match.start + _leadingWhitespaceLength(match.group(0)!),
               kind: _kindForMarker(explicit.group(2)!),
-              strong: _strongExplicitHeadingPattern.hasMatch(line),
+              strong: strong,
             ),
           );
         }
-        final suffix = explicit.group(3) ?? '';
         final embedded =
             _findEmbeddedHeading(line, explicit.end - suffix.length);
         if (embedded != null) {
-          candidates.add(
-            _HeadingCandidate(
-              start: match.start +
-                  _leadingWhitespaceLength(match.group(0)!) +
-                  embedded.start,
-              kind: _kindForMarker(embedded.group(2)!),
-              strong: _strongExplicitHeadingPattern.hasMatch(
-                line.substring(embedded.start),
-              ),
-            ),
+          final embeddedSuffix = embedded.group(3) ?? '';
+          final embeddedStrong = _strongExplicitHeadingPattern.hasMatch(
+            line.substring(embedded.start),
           );
+          if (!_looksLikeProseTitledLine(
+            embeddedSuffix,
+            strong: embeddedStrong,
+          )) {
+            candidates.add(
+              _HeadingCandidate(
+                start: match.start +
+                    _leadingWhitespaceLength(match.group(0)!) +
+                    embedded.start,
+                kind: _kindForMarker(embedded.group(2)!),
+                strong: embeddedStrong,
+              ),
+            );
+          }
         }
         continue;
       }
@@ -297,7 +328,13 @@ class TxtParser {
       if (embedded != null &&
           embedded.start > 0 &&
           _hasEmbeddedHeadingBoundary(line, embedded.start) &&
-          !_looksLikeEndMarker(embedded.group(3))) {
+          !_looksLikeEndMarker(embedded.group(3)) &&
+          !_looksLikeProseTitledLine(
+            embedded.group(3) ?? '',
+            strong: _strongExplicitHeadingPattern.hasMatch(
+              line.substring(embedded.start),
+            ),
+          )) {
         candidates.add(
           _HeadingCandidate(
             start: match.start +
@@ -328,14 +365,51 @@ class TxtParser {
   static bool _hasEmbeddedHeadingBoundary(String line, int start) {
     if (start <= 0) return true;
     final prefix = line.substring(0, start).trimRight();
-    return prefix.endsWith('。') ||
+    if (prefix.endsWith('。') ||
         prefix.endsWith('！') ||
         prefix.endsWith('？') ||
         prefix.endsWith('!') ||
-        prefix.endsWith('?') ||
-        prefix.endsWith('完') ||
-        prefix.endsWith('终わり') ||
-        prefix.endsWith('終わり');
+        prefix.endsWith('?')) {
+      return true;
+    }
+    // 「第一章完第二章」这种抓取格式里，完结标记要贴着一个章节标记，
+    // 不能是「读完第三章」——后者是叙述，不是上一章的结束。
+    for (final end in const ['终わり', '終わり', '完']) {
+      if (prefix.endsWith(end)) {
+        final head =
+            prefix.substring(0, prefix.length - end.length).trimRight();
+        return _headingMarkerAtEnd.hasMatch(head);
+      }
+    }
+    return false;
+  }
+
+  /// 这一行像不像正文里顺口提到「第几章」，而不是章节标题。
+  ///
+  /// 判据尽量保守：真标题很少带句号、分号，也很少在「第X章」后面直接接
+  /// 「的/里/中/内容」这类叙述用词。短标题「第一章开始」「第一章上」不受影响。
+  static bool _looksLikeProseTitledLine(
+    String suffix, {
+    required bool strong,
+  }) {
+    final title = suffix.trim();
+    // 单独一个句号是旧式标题的收尾，不算句子。
+    if (title == '。') return false;
+    if (title.contains('。') || title.contains('；') || title.contains(';')) {
+      return true;
+    }
+    // 问号、叹号可以收尾（「第二话 人物属性是定制的吗？」），出现在中间
+    // 就说明后面还有话。
+    final exclaim = title.indexOf(RegExp('[！？!?]'));
+    if (exclaim >= 0 && exclaim != title.length - 1) return true;
+    if (!strong) {
+      // 「第一章上/中/下」是常见的分节写法，单独一个字不算叙述。
+      if (title == '上' || title == '中' || title == '下') return false;
+      if (title.contains('，')) return true;
+      if (title.contains(RegExp('[“”「」『』]'))) return true;
+      if (_proseContinuation.hasMatch(title)) return true;
+    }
+    return false;
   }
 
   static bool _looksLikeEndMarker(String? suffix) {
@@ -401,6 +475,10 @@ class TxtParser {
         if (_shouldIncludeNumeric(chapterCount, numericCount))
           _HeadingKind.numeric,
       };
+      // 本书的章节标题已经由强标题（「第一章 开始」）确立，那些没有分隔符
+      // 的弱匹配多半是正文在提「第三章」。混进来会把一章劈成两半，还会
+      // 造出只有标题、没有正文的空章。
+      strongOnlyKind = _HeadingKind.chapter;
     } else if (strongSectionCount >= 2) {
       selectedKinds = {_HeadingKind.section};
       strongOnlyKind = _HeadingKind.section;
