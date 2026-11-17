@@ -127,6 +127,15 @@ Drift ORM（`drift` + `sqlite3_flutter_libs`），数据库文件 `reading_offli
 
 `tool/make_icon.py` 生成全部图标文件：Android 的传统 `ic_launcher.png`、自适应图标的前景 / 背景 PNG 与 `mipmap-anydpi-v26/ic_launcher.xml`、Windows 的 `app_icon.ico`，外加 `tool/icon.png` 这张 1024 主图。改图标改脚本再跑一遍，不要手改 mipmap 里的 PNG。没用 `flutter_launcher_icons`：它要 `image ^4`，和 `epubx` 依赖的 `image 3.x` 冲突。
 
+## 第三方依赖（third_party/）
+
+有两样依赖放进了仓库，构建时不联网下载，详细说明见 `third_party/README.md`：
+
+- `third_party/flutter_tts`：4.2.5 加补丁，通过 `dependency_overrides` 引用。原版 Windows 插件在注册时就创建系统语音对象，系统语音运行时出问题就抛异常，应用启动即退出。补丁改为失败时返回 `tts_unavailable`，下次调用时重试。改动只在 `windows/flutter_tts_plugin.cpp`，都标了 `[yunchuang]`。升级 flutter_tts 前先看上游修没修。
+- `third_party/sqlite3`：sqlite3 包构建钩子要用的预编译库，包括 Windows x64、Android 三种 ABI 和 CI 用的 Linux x64。`hooks.user_defines` 让钩子读这里，不从 GitHub 下载：下载地址写死在钩子里，换不了镜像，GitHub 在这边又时常连不上。钩子会按包里记录的 SHA-256 校验文件。升级 sqlite3（drift 常带着它一起升）后，构建会报哈希不对，这时跑 `.\tool\fetch_sqlite3.ps1`：GitHub 连不上时它会依次换镜像，下载的文件都要通过哈希校验。
+
+`third_party/**` 不参与 `flutter analyze`。
+
 ## 数据目录
 
 数据库、书籍、封面、词典、背景图都放在 `appDataDirectory()`（`utils/app_data_directory.dart`）返回的目录下，默认是系统文档目录。设了环境变量 `YUNCHUANG_DATA_DIR` 就用它——README 的截图就是这样在一个空目录 + Gutenberg 公版书上截的，没有碰真实书库。不要在各处直接调 `getApplicationDocumentsDirectory()`，新代码走这个函数（或各 Service 的 `appDirectoryProvider` 注入）。
@@ -196,6 +205,7 @@ UI 在 `widgets/ai_chat_panel.dart`（阅读器内嵌）和 `pages/ai/ai_chat_pa
 - **起点**：没有暂停中的朗读时，工具栏、朗读面板、通知栏按播放都走 `ReaderPage._startTtsFromReadingPosition`——从屏幕正中那一句的句首读；还停在章首（滚动到顶 / 第一页）就从头读。
 - **跟读**：滚动模式由 `ReaderScrollController.reveal` 把正在读的段落滚到正文区上部，段落贴近底边才滚，用户正在拖动时不抢；翻页模式由 `PagedReader` 翻到高亮所在的页，并把各页起点交给 `setSpeechBreaks`，让朗读单位在页首之前的句末断开，读到下一页的内容时页面已经翻过去。见 `test/pages/reader_tts_follow_test.dart`。
 - **外部语音服务**（`services/external_tts.dart`）：OpenAI 兼容的 `POST {baseUrl}/audio/speech`，返回 mp3 用 `audioplayers` 播放（先写临时文件，Windows 不一定支持直接播内存）。播一段的同时预取下一段；暂停后原地续播不重新合成。请求必须设连接超时（`externalTtsBaseOptions`），否则地址填错时要等系统 TCP 超时。Android 上 audioplayers 丢了音频焦点会自己暂停却不发事件，`PlaybackStallWatchdog` 看播放位置停没停，把状态同步成暂停。设置在 TTS 设置页，存 SharedPreferences，键都以 `externalTts` 开头——里面有 API Key，**备份整组排除**（`BackupService._credentialKeyPrefixes`），开关也在这组里，免得恢复出半配置状态。地址、模型、声音没填全时朗读继续用系统引擎。
+- **Windows 系统引擎起不来**：打过补丁的插件（见「第三方依赖」）返回 `PlatformException('tts_unavailable')`，`_initializeSystemEngine` 把它换成提示改用外部语音服务的文案。之后按播放或「重试」会重新初始化，插件也会再尝试创建语音对象。
 
 ## 主题与背景
 

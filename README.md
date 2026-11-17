@@ -308,6 +308,8 @@ API Key 只保存在本机，应用备份不会包含密钥。
 
 默认使用系统语音引擎，完全离线。也可以在「设置 → TTS 设置」改用 OpenAI 兼容的外部语音服务（`POST /audio/speech`），如 OpenAI、硅基流动，或自建的 openai-edge-tts、Kokoro-FastAPI。启用后，朗读的文字会发送到你填写的服务地址。
 
+个别 Windows 电脑上，系统语音引擎会启动失败。此时朗读面板会给出提示，改用外部语音服务即可，其他功能不受影响。
+
 Android 端接入系统媒体会话，可以：
 
 * 后台播放
@@ -411,6 +413,8 @@ Windows：
 ```bash
 flutter run -d windows
 ```
+
+构建时不需要连 GitHub：SQLite 的预编译库和打过补丁的 flutter_tts 已放在 `third_party/`，原因和更新方法见 [third_party/README.md](third_party/README.md)。升级 sqlite3 包之后，运行 `.\tool\fetch_sqlite3.ps1` 更新预编译库；GitHub 连不上时，脚本会自动改用镜像下载。
 
 生成的 `*.g.dart` 已随仓库提交，因此克隆项目后不需要先运行 `build_runner`。
 
