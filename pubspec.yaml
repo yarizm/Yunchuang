@@ -69,6 +69,14 @@ dependencies:
   wakelock_plus: ^1.2.4
   audioplayers: ^6.8.1
 
+hooks:
+  user_defines:
+    sqlite3:
+      # 用仓库里的预编译库（与 GitHub Release 上的同一份，钩子按哈希校验），
+      # 构建时不再联网下载。升级 sqlite3 后跑 tool/fetch_sqlite3.ps1 更新。
+      source: test-sqlite3
+      directory: third_party/sqlite3/
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
