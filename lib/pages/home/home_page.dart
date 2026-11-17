@@ -8,11 +8,13 @@ import '../../models/book_shelf_options.dart';
 import '../../providers/book_import_progress.dart';
 import '../../providers/book_provider.dart';
 import '../../providers/database_provider.dart';
+import '../../providers/preferences_provider.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/book_drop_target.dart';
 import '../../widgets/shared_import_watcher.dart';
 import '../../widgets/glass_container.dart';
 import '../../theme/glass_page_route.dart';
+import '../../theme/reader_theme.dart';
 import '../reader/reader_page.dart';
 import 'book_card.dart';
 import 'book_collection_sheets.dart';
@@ -157,24 +159,32 @@ class HomePage extends ConsumerWidget {
                           (context, index) {
                             final book = visibleBooks[index];
                             final progress = progressMap[book.id];
-                            return BookCard(
-                              book: book,
-                              progress: progress,
-                              status: shelfStatusFor(book, progress),
-                              selected: selectedBookIds.contains(book.id),
-                              onTap: selectedBookIds.isEmpty
-                                  ? () => _openBook(context, book)
-                                  : () => toggleBookSelection(ref, book.id),
-                              onLongPress: () =>
-                                  toggleBookSelection(ref, book.id),
-                              onMore: selectedBookIds.isEmpty
-                                  ? () => _showBookOptions(
-                                        context,
-                                        ref,
-                                        book,
-                                        progress,
-                                      )
-                                  : null,
+                            // Builder 拿到的是这张卡片自己的位置，打开书时
+                            // 从这里展开。
+                            return Builder(
+                              builder: (cardContext) => BookCard(
+                                book: book,
+                                progress: progress,
+                                status: shelfStatusFor(book, progress),
+                                selected: selectedBookIds.contains(book.id),
+                                onTap: selectedBookIds.isEmpty
+                                    ? () => _openBook(
+                                          context,
+                                          book,
+                                          from: _globalRectOf(cardContext),
+                                        )
+                                    : () => toggleBookSelection(ref, book.id),
+                                onLongPress: () =>
+                                    toggleBookSelection(ref, book.id),
+                                onMore: selectedBookIds.isEmpty
+                                    ? () => _showBookOptions(
+                                          context,
+                                          ref,
+                                          book,
+                                          progress,
+                                        )
+                                    : null,
+                              ),
                             );
                           },
                           addAutomaticKeepAlives: false,
@@ -196,24 +206,30 @@ class HomePage extends ConsumerWidget {
                                 bottom:
                                     index == visibleBooks.length - 1 ? 0 : 12,
                               ),
-                              child: BookListTile(
-                                book: book,
-                                progress: progress,
-                                status: shelfStatusFor(book, progress),
-                                selected: selectedBookIds.contains(book.id),
-                                onTap: selectedBookIds.isEmpty
-                                    ? () => _openBook(context, book)
-                                    : () => toggleBookSelection(ref, book.id),
-                                onLongPress: () =>
-                                    toggleBookSelection(ref, book.id),
-                                onMore: selectedBookIds.isEmpty
-                                    ? () => _showBookOptions(
-                                          context,
-                                          ref,
-                                          book,
-                                          progress,
-                                        )
-                                    : null,
+                              child: Builder(
+                                builder: (tileContext) => BookListTile(
+                                  book: book,
+                                  progress: progress,
+                                  status: shelfStatusFor(book, progress),
+                                  selected: selectedBookIds.contains(book.id),
+                                  onTap: selectedBookIds.isEmpty
+                                      ? () => _openBook(
+                                            context,
+                                            book,
+                                            from: _globalRectOf(tileContext),
+                                          )
+                                      : () => toggleBookSelection(ref, book.id),
+                                  onLongPress: () =>
+                                      toggleBookSelection(ref, book.id),
+                                  onMore: selectedBookIds.isEmpty
+                                      ? () => _showBookOptions(
+                                            context,
+                                            ref,
+                                            book,
+                                            progress,
+                                          )
+                                      : null,
+                                ),
                               ),
                             );
                           },
@@ -605,13 +621,28 @@ class HomePage extends ConsumerWidget {
     );
   }
 
-  void _openBook(BuildContext context, Book book) {
+  void _openBook(BuildContext context, Book book, {Rect? from}) {
+    // 展开时那张纸用阅读器的纸张色，正文淡入时底色不跳。
+    final paper = readerThemeFor(
+      Theme.of(context),
+      ProviderScope.containerOf(context).read(preferencesProvider).readerPaper,
+    ).colorScheme.surface;
     Navigator.of(context, rootNavigator: true).push(
       GlassPageRoute(
         paintsOwnBackground: true,
+        expandFrom: from,
+        expandColor: paper,
         builder: (_) => ReaderPage(bookId: book.id),
       ),
     );
+  }
+
+  /// 部件在屏幕上的位置（全局坐标）。还没布局好就返回 null，打开书时退回
+  /// 普通的放大淡入。
+  Rect? _globalRectOf(BuildContext context) {
+    final box = context.findRenderObject();
+    if (box is! RenderBox || !box.hasSize || !box.attached) return null;
+    return box.localToGlobal(Offset.zero) & box.size;
   }
 
   void _showEditBookDialog(BuildContext context, WidgetRef ref, Book book) {

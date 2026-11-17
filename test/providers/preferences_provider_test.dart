@@ -66,4 +66,22 @@ void main() {
     expect(container.read(preferencesProvider).readingBrightness, -1);
     expect(preferences.getDouble('readingBrightness'), -1);
   });
+
+  test('interface animations default on and persist the switch', () async {
+    SharedPreferences.setMockInitialValues({});
+    final preferences = await SharedPreferences.getInstance();
+    final container = ProviderContainer(
+      overrides: [sharedPreferencesProvider.overrideWithValue(preferences)],
+    );
+    addTearDown(container.dispose);
+
+    expect(container.read(preferencesProvider).enhancedAnimations, isTrue);
+
+    container
+        .read(preferencesProvider.notifier)
+        .updateEnhancedAnimations(false);
+
+    expect(container.read(preferencesProvider).enhancedAnimations, isFalse);
+    expect(preferences.getBool('enhancedAnimations'), isFalse);
+  });
 }

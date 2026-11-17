@@ -10,7 +10,7 @@ import '../../providers/ui_provider.dart';
 import '../../services/background_image_service.dart';
 import '../../widgets/glass_container.dart';
 
-/// 外观设置：全局背景样式、浓度、自定义背景图。
+/// 外观设置：界面动画、全局背景样式、浓度、自定义背景图。
 ///
 /// 正文纸张不在这里，在「阅读偏好」里——它和字号行距一样是读书时的设置，
 /// 而且那一页已经有实时预览。
@@ -48,6 +48,27 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
         padding: const EdgeInsets.all(16),
         children: [
           GlassContainer.stable(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            margin: const EdgeInsets.only(bottom: 16),
+            child: Material(
+              type: MaterialType.transparency,
+              child: SwitchListTile(
+                secondary: const Icon(Icons.animation),
+                title: const Text('界面动画'),
+                subtitle: Text(
+                  MediaQuery.disableAnimationsOf(context)
+                      ? '系统已开启「移除动画」，这里暂不生效'
+                      : '切换页面、打开书、点按卡片和翻页换章时的过渡动画',
+                  style: theme.textTheme.bodySmall,
+                ),
+                value: prefs.enhancedAnimations,
+                onChanged: (value) => ref
+                    .read(preferencesProvider.notifier)
+                    .updateEnhancedAnimations(value),
+              ),
+            ),
+          ),
+          GlassContainer.stable(
             padding: const EdgeInsets.all(20),
             margin: const EdgeInsets.only(bottom: 16),
             child: Column(
@@ -60,34 +81,39 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
                   style: theme.textTheme.bodySmall,
                 ),
                 const SizedBox(height: 12),
-                RadioGroup<AppBackgroundStyle>(
-                  groupValue: style,
-                  onChanged: (value) {
-                    if (value == null) return;
-                    // 还没有图就先去选图，选完自动落到 custom；否则用户选中
-                    // 一个什么都不显示的选项，会以为坏了。
-                    if (value == AppBackgroundStyle.custom &&
-                        customPath == null) {
-                      _pickImage();
-                      return;
-                    }
-                    ref
-                        .read(preferencesProvider.notifier)
-                        .updateAppBackgroundStyle(value);
-                  },
-                  child: Column(
-                    children: [
-                      for (final option in AppBackgroundStyle.values)
-                        RadioListTile<AppBackgroundStyle>(
-                          value: option,
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(option.label),
-                          subtitle: Text(
-                            _describe(option),
-                            style: theme.textTheme.bodySmall,
+                // 卡片有不透明底色，水波纹要画在它上面的 Material 里，否则点
+                // 下去看不见反馈。
+                Material(
+                  type: MaterialType.transparency,
+                  child: RadioGroup<AppBackgroundStyle>(
+                    groupValue: style,
+                    onChanged: (value) {
+                      if (value == null) return;
+                      // 还没有图就先去选图，选完自动落到 custom；否则用户选中
+                      // 一个什么都不显示的选项，会以为坏了。
+                      if (value == AppBackgroundStyle.custom &&
+                          customPath == null) {
+                        _pickImage();
+                        return;
+                      }
+                      ref
+                          .read(preferencesProvider.notifier)
+                          .updateAppBackgroundStyle(value);
+                    },
+                    child: Column(
+                      children: [
+                        for (final option in AppBackgroundStyle.values)
+                          RadioListTile<AppBackgroundStyle>(
+                            value: option,
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(option.label),
+                            subtitle: Text(
+                              _describe(option),
+                              style: theme.textTheme.bodySmall,
+                            ),
                           ),
-                        ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -109,7 +135,8 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
                         child: Slider(
                           value: prefs.backgroundIntensity,
                           divisions: 20,
-                          label: '${(prefs.backgroundIntensity * 100).round()}%',
+                          label:
+                              '${(prefs.backgroundIntensity * 100).round()}%',
                           onChanged: (value) => ref
                               .read(preferencesProvider.notifier)
                               .updateBackgroundIntensity(value),

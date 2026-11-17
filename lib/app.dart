@@ -6,11 +6,13 @@ import 'pages/home/home_page.dart';
 import 'pages/notes/notes_page.dart';
 import 'pages/stats/reading_stats_page.dart';
 import 'pages/settings/settings_page.dart';
+import 'theme/app_motion.dart';
 import 'theme/app_theme.dart';
 import 'utils/app_orientation.dart';
 import 'providers/database_provider.dart';
 import 'providers/preferences_provider.dart';
 import 'providers/webdav_provider.dart';
+import 'widgets/animated_branch_container.dart';
 import 'widgets/app_background.dart';
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
@@ -20,9 +22,15 @@ final routerProvider = Provider<GoRouter>((ref) {
     navigatorKey: _rootNavigatorKey,
     initialLocation: '/',
     routes: [
-      StatefulShellRoute.indexedStack(
+      StatefulShellRoute(
         builder: (context, state, navigationShell) =>
             MainShell(navigationShell: navigationShell),
+        // 默认的 IndexedStack 切 Tab 是硬切，换成能淡入淡出的容器。
+        navigatorContainerBuilder: (context, navigationShell, children) =>
+            AnimatedBranchContainer(
+          currentIndex: navigationShell.currentIndex,
+          children: children,
+        ),
         branches: [
           StatefulShellBranch(
             routes: [
@@ -69,6 +77,8 @@ class ReadingOfflineApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final router = ref.watch(routerProvider);
     final themeStr = ref.watch(preferencesProvider.select((p) => p.theme));
+    final enhancedAnimations =
+        ref.watch(preferencesProvider.select((p) => p.enhancedAnimations));
 
     // 全局背景不在这里：它是每个页面各画一层的（MainShell 一层、每个
     // GlassPageRoute 一层），见 AppBackground 的说明。
@@ -77,6 +87,11 @@ class ReadingOfflineApp extends ConsumerWidget {
       theme: AppTheme.resolve(themeStr, Brightness.light),
       darkTheme: AppTheme.resolve(themeStr, Brightness.dark),
       routerConfig: router,
+      // 挂在这里，所有路由和弹层都在它下面，见 AppMotion。
+      builder: (context, child) => AppMotion(
+        enabled: enhancedAnimations,
+        child: child ?? const SizedBox.shrink(),
+      ),
     );
   }
 }
@@ -139,13 +154,64 @@ class _MainShellState extends ConsumerState<MainShell> {
             );
           },
           destinations: const [
-            NavigationDestination(icon: Icon(Icons.book), label: '书架'),
-            NavigationDestination(icon: Icon(Icons.note), label: '笔记'),
-            NavigationDestination(icon: Icon(Icons.bar_chart), label: '统计'),
-            NavigationDestination(icon: Icon(Icons.settings), label: '设置'),
+            NavigationDestination(
+              icon: Icon(Icons.book),
+              selectedIcon: _SelectedNavIcon(Icons.book),
+              label: '书架',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.note),
+              selectedIcon: _SelectedNavIcon(Icons.note),
+              label: '笔记',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.bar_chart),
+              selectedIcon: _SelectedNavIcon(Icons.bar_chart),
+              label: '统计',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.settings),
+              selectedIcon: _SelectedNavIcon(Icons.settings),
+              label: '设置',
+            ),
           ],
         ),
       ),
+    );
+  }
+}
+
+/// 底栏选中的图标：选中那一下轻轻弹一下（界面动画开着时）。
+///
+/// NavigationBar 在选中和未选中之间换的是两个不同的部件，选中时这个部件
+/// 新挂上去，动画就从头播一次；之后重建不会再播。
+class _SelectedNavIcon extends StatelessWidget {
+  final IconData icon;
+
+  const _SelectedNavIcon(this.icon);
+
+  static final _bounce = TweenSequence<double>([
+    TweenSequenceItem(
+      tween: Tween<double>(begin: 0.8, end: 1.14)
+          .chain(CurveTween(curve: Curves.easeOut)),
+      weight: 45,
+    ),
+    TweenSequenceItem(
+      tween: Tween<double>(begin: 1.14, end: 1)
+          .chain(CurveTween(curve: Curves.easeInOut)),
+      weight: 55,
+    ),
+  ]);
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      // begin 只在第一次 build 时用到：动画关着时起点就是终点，不播。
+      tween: Tween(begin: AppMotion.of(context) ? 0.0 : 1.0, end: 1.0),
+      duration: const Duration(milliseconds: 360),
+      builder: (context, t, child) =>
+          Transform.scale(scale: _bounce.transform(t), child: child),
+      child: Icon(icon),
     );
   }
 }

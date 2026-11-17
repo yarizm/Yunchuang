@@ -61,6 +61,10 @@ class ReadingDefaults {
   /// 水彩插画常驻在 0.8 不透明度上，书架的封面几乎是贴在一幅画上看的。
   static const double backgroundIntensity = 0.22;
 
+  /// 界面动画：页面切换、点按回弹、换章过渡。系统开了「移除动画」时不管
+  /// 这里怎么设都不播，见 AppMotion。
+  static const bool enhancedAnimations = true;
+
   // 正文纸张
   static const String readerPaperId = 'theme';
   static const int? readerPaperColor = null;

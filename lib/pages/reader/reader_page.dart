@@ -39,6 +39,7 @@ import '../../widgets/translation_sheet.dart';
 import '../../widgets/vocabulary_lookup_sheet.dart';
 import '../../utils/local_date.dart';
 import '../../parsers/epub_parser.dart';
+import 'chapter_transition.dart';
 import 'epub_reader.dart';
 import 'paged_reader.dart';
 import 'pdf_reader.dart';
@@ -1908,50 +1909,10 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
       return reader;
     }
 
-    final readerKey = ValueKey<String>('page-reader-${chapter.id}');
-    final direction = _chapterTransitionDirection >= 0 ? 1.0 : -1.0;
-
-    return ClipRect(
-      child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 420),
-        reverseDuration: const Duration(milliseconds: 360),
-        switchInCurve: Curves.easeOutCubic,
-        switchOutCurve: Curves.easeInOutCubic,
-        layoutBuilder: (currentChild, previousChildren) {
-          return Stack(
-            fit: StackFit.expand,
-            children: [
-              ...previousChildren,
-              if (currentChild != null) currentChild,
-            ],
-          );
-        },
-        transitionBuilder: (child, animation) {
-          final incoming = child.key == readerKey;
-          final slide = Tween<Offset>(
-            begin: incoming
-                ? Offset(direction * 0.16, 0)
-                : Offset(-direction * 0.08, 0),
-            end: Offset.zero,
-          ).animate(animation);
-          final opacity = Tween<double>(
-            begin: incoming ? 0.96 : 0.90,
-            end: 1,
-          ).animate(animation);
-
-          return FadeTransition(
-            opacity: opacity,
-            child: SlideTransition(
-              position: slide,
-              child: child,
-            ),
-          );
-        },
-        child: KeyedSubtree(
-          key: readerKey,
-          child: reader,
-        ),
-      ),
+    return ChapterTransition(
+      chapterKey: ValueKey<String>('page-reader-${chapter.id}'),
+      direction: _chapterTransitionDirection >= 0 ? 1.0 : -1.0,
+      child: reader,
     );
   }
 

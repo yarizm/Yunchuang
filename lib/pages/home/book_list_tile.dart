@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../../database/app_database.dart';
 import '../../models/book_reading_status.dart';
+import '../../theme/app_motion.dart';
+import '../../widgets/press_scale.dart';
 import 'book_card.dart';
 
 class BookListTile extends StatelessWidget {
@@ -34,136 +36,146 @@ class BookListTile extends StatelessWidget {
         _seriesLabel(book),
     ].join(' · ');
 
-    return RepaintBoundary(
-      child: Material(
-        color: theme.colorScheme.surface,
-        clipBehavior: Clip.antiAlias,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8),
-          side: BorderSide(
-            color: selected
-                ? theme.colorScheme.primary
-                : theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
-            width: selected ? 2 : 1,
-          ),
-        ),
-        child: InkWell(
-          onTap: onTap,
-          onLongPress: onLongPress,
-          child: Padding(
-            padding: const EdgeInsets.all(10),
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 62,
-                  height: 88,
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(4),
-                        child: BookCover(book: book),
-                      ),
-                      if (selected)
-                        ColoredBox(
-                          color:
-                              theme.colorScheme.primary.withValues(alpha: 0.5),
-                          child: const Icon(
-                            Icons.check_circle,
-                            color: Colors.white,
-                            size: 30,
+    final motion = AppMotion.of(context);
+    return PressScale(
+      scale: 0.98,
+      child: AnimatedScale(
+        scale: motion && selected ? 0.97 : 1,
+        duration: motion ? const Duration(milliseconds: 220) : Duration.zero,
+        curve: Curves.easeOutCubic,
+        child: RepaintBoundary(
+          child: Material(
+            color: theme.colorScheme.surface,
+            clipBehavior: Clip.antiAlias,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+              side: BorderSide(
+                color: selected
+                    ? theme.colorScheme.primary
+                    : theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
+                width: selected ? 2 : 1,
+              ),
+            ),
+            child: InkWell(
+              onTap: onTap,
+              onLongPress: onLongPress,
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 62,
+                      height: 88,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(4),
+                            child: BookCover(book: book),
                           ),
-                        ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: SizedBox(
-                    height: 88,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
+                          if (selected)
+                            ColoredBox(
+                              color: theme.colorScheme.primary
+                                  .withValues(alpha: 0.5),
+                              child: const Icon(
+                                Icons.check_circle,
+                                color: Colors.white,
+                                size: 30,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: SizedBox(
+                        height: 88,
+                        child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Expanded(
-                              child: Text(
-                                book.title,
-                                maxLines: 2,
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    book.title,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style:
+                                        theme.textTheme.titleMedium?.copyWith(
+                                      fontWeight: FontWeight.w600,
+                                      height: 1.25,
+                                    ),
+                                  ),
+                                ),
+                                IconButton(
+                                  tooltip: '书籍选项',
+                                  visualDensity: VisualDensity.compact,
+                                  constraints: const BoxConstraints.tightFor(
+                                    width: 32,
+                                    height: 32,
+                                  ),
+                                  padding: EdgeInsets.zero,
+                                  icon: const Icon(Icons.more_vert, size: 20),
+                                  onPressed: selected ? null : onMore,
+                                ),
+                              ],
+                            ),
+                            if (subtitle.isNotEmpty) ...[
+                              const SizedBox(height: 3),
+                              Text(
+                                subtitle,
+                                maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.titleMedium?.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                  height: 1.25,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
                                 ),
                               ),
-                            ),
-                            IconButton(
-                              tooltip: '书籍选项',
-                              visualDensity: VisualDensity.compact,
-                              constraints: const BoxConstraints.tightFor(
-                                width: 32,
-                                height: 32,
-                              ),
-                              padding: EdgeInsets.zero,
-                              icon: const Icon(Icons.more_vert, size: 20),
-                              onPressed: selected ? null : onMore,
-                            ),
-                          ],
-                        ),
-                        if (subtitle.isNotEmpty) ...[
-                          const SizedBox(height: 3),
-                          Text(
-                            subtitle,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ],
-                        const Spacer(),
-                        Row(
-                          children: [
-                            Icon(
-                              _statusIcon(status),
-                              size: 15,
-                              color: theme.colorScheme.primary,
-                            ),
-                            const SizedBox(width: 5),
-                            Text(
-                              status.label,
-                              style: theme.textTheme.labelMedium,
-                            ),
-                            const SizedBox(width: 10),
-                            Text(
-                              book.format.toUpperCase(),
-                              style: theme.textTheme.labelSmall?.copyWith(
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
+                            ],
+                            const Spacer(),
+                            Row(
+                              children: [
+                                Icon(
+                                  _statusIcon(status),
+                                  size: 15,
+                                  color: theme.colorScheme.primary,
+                                ),
+                                const SizedBox(width: 5),
+                                Text(
+                                  status.label,
+                                  style: theme.textTheme.labelMedium,
+                                ),
+                                const SizedBox(width: 10),
+                                Text(
+                                  book.format.toUpperCase(),
+                                  style: theme.textTheme.labelSmall?.copyWith(
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                                if (percentage != null) ...[
+                                  const Spacer(),
+                                  Text(
+                                    '${(percentage * 100).round()}%',
+                                    style: theme.textTheme.labelMedium,
+                                  ),
+                                ],
+                              ],
                             ),
                             if (percentage != null) ...[
-                              const Spacer(),
-                              Text(
-                                '${(percentage * 100).round()}%',
-                                style: theme.textTheme.labelMedium,
+                              const SizedBox(height: 5),
+                              LinearProgressIndicator(
+                                value: percentage,
+                                minHeight: 3,
+                                borderRadius: BorderRadius.circular(2),
                               ),
                             ],
                           ],
                         ),
-                        if (percentage != null) ...[
-                          const SizedBox(height: 5),
-                          LinearProgressIndicator(
-                            value: percentage,
-                            minHeight: 3,
-                            borderRadius: BorderRadius.circular(2),
-                          ),
-                        ],
-                      ],
+                      ),
                     ),
-                  ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         ),

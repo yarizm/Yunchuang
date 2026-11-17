@@ -37,6 +37,7 @@ class ReadingPreferences {
   final String appBackgroundStyle;
   final String? customBackgroundPath;
   final double backgroundIntensity;
+  final bool enhancedAnimations;
   final String readerPaperId;
   final int? readerPaperColor;
 
@@ -68,6 +69,7 @@ class ReadingPreferences {
     this.appBackgroundStyle = ReadingDefaults.appBackgroundStyle,
     this.customBackgroundPath = ReadingDefaults.customBackgroundPath,
     this.backgroundIntensity = ReadingDefaults.backgroundIntensity,
+    this.enhancedAnimations = ReadingDefaults.enhancedAnimations,
     this.readerPaperId = ReadingDefaults.readerPaperId,
     this.readerPaperColor = ReadingDefaults.readerPaperColor,
   });
@@ -102,6 +104,7 @@ class ReadingPreferences {
     String? customBackgroundPath,
     bool clearCustomBackgroundPath = false,
     double? backgroundIntensity,
+    bool? enhancedAnimations,
     String? readerPaperId,
     int? readerPaperColor,
   }) {
@@ -136,6 +139,7 @@ class ReadingPreferences {
           ? null
           : (customBackgroundPath ?? this.customBackgroundPath),
       backgroundIntensity: backgroundIntensity ?? this.backgroundIntensity,
+      enhancedAnimations: enhancedAnimations ?? this.enhancedAnimations,
       readerPaperId: readerPaperId ?? this.readerPaperId,
       // 没有「清掉自定义色」这一路：切到预设时故意把色值留着，
       // 用户切回自定义还能拿回原来那个颜色（见 updateReaderPaper）。
@@ -188,6 +192,7 @@ class PreferencesNotifier extends Notifier<ReadingPreferences> {
   static const _kAppBackgroundStyle = 'appBackgroundStyle';
   static const _kCustomBackgroundPath = 'customBackgroundPath';
   static const _kBackgroundIntensity = 'backgroundIntensity';
+  static const _kEnhancedAnimations = 'enhancedAnimations';
   static const _kReaderPaperId = 'readerPaperId';
   static const _kReaderPaperColor = 'readerPaperColor';
 
@@ -245,6 +250,8 @@ class PreferencesNotifier extends Notifier<ReadingPreferences> {
       backgroundIntensity: (prefs.getDouble(_kBackgroundIntensity) ??
               ReadingDefaults.backgroundIntensity)
           .clamp(0.0, 1.0),
+      enhancedAnimations: prefs.getBool(_kEnhancedAnimations) ??
+          ReadingDefaults.enhancedAnimations,
       readerPaperId:
           prefs.getString(_kReaderPaperId) ?? ReadingDefaults.readerPaperId,
       readerPaperColor: prefs.getInt(_kReaderPaperColor),
@@ -429,6 +436,11 @@ class PreferencesNotifier extends Notifier<ReadingPreferences> {
     ref
         .read(sharedPreferencesProvider)
         .setDouble(_kBackgroundIntensity, normalized);
+  }
+
+  void updateEnhancedAnimations(bool value) {
+    state = state.copyWith(enhancedAnimations: value);
+    ref.read(sharedPreferencesProvider).setBool(_kEnhancedAnimations, value);
   }
 
   void updateReaderPaper(ReaderPaper paper) {

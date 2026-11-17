@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../../database/app_database.dart';
 import '../../models/book_reading_status.dart';
+import '../../theme/app_motion.dart';
+import '../../widgets/press_scale.dart';
 
 class BookCard extends StatelessWidget {
   final Book book;
@@ -35,122 +37,141 @@ class BookCard extends StatelessWidget {
         _seriesLabel(book),
     ].join(' · ');
 
-    return RepaintBoundary(
-      child: Material(
-        color: theme.colorScheme.surface,
-        shadowColor: Colors.black.withValues(alpha: 0.08),
-        elevation: 1,
-        clipBehavior: Clip.antiAlias,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8),
-          side: BorderSide(
-            color: selected
-                ? theme.colorScheme.primary
-                : theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
-            width: selected ? 2 : 1,
-          ),
-        ),
-        child: InkWell(
-          onTap: onTap,
-          onLongPress: onLongPress,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    BookCover(book: book),
-                    if (status != null)
-                      Positioned(
-                        top: 8,
-                        right: 8,
-                        child: _buildStatusBadge(context, status!),
-                      ),
-                    Positioned(
-                      top: 4,
-                      left: 4,
-                      child: selected
-                          ? _SelectionMark(color: theme.colorScheme.primary)
-                          : IconButton.filledTonal(
-                              tooltip: '书籍选项',
-                              visualDensity: VisualDensity.compact,
-                              constraints: const BoxConstraints.tightFor(
-                                width: 34,
-                                height: 34,
-                              ),
-                              icon: const Icon(Icons.more_vert, size: 19),
-                              onPressed: onMore,
-                            ),
-                    ),
-                  ],
-                ),
+    final motion = AppMotion.of(context);
+    return PressScale(
+      child: AnimatedScale(
+        // 多选时选中的卡片往里收一点，和没选中的一眼分得开。
+        scale: motion && selected ? 0.95 : 1,
+        duration: motion ? const Duration(milliseconds: 220) : Duration.zero,
+        curve: Curves.easeOutCubic,
+        child: RepaintBoundary(
+          child: Material(
+            color: theme.colorScheme.surface,
+            shadowColor: Colors.black.withValues(alpha: 0.08),
+            elevation: 1,
+            clipBehavior: Clip.antiAlias,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+              side: BorderSide(
+                color: selected
+                    ? theme.colorScheme.primary
+                    : theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
+                width: selected ? 2 : 1,
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      book.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        height: 1.3,
-                      ),
-                    ),
-                    if (subtitle.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        subtitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              if (progressValue != null)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(2),
-                          child: LinearProgressIndicator(
-                            value: progressValue,
-                            backgroundColor: theme.colorScheme.primary
-                                .withValues(alpha: 0.12),
-                            minHeight: 4,
-                            valueColor: AlwaysStoppedAnimation(
-                              theme.colorScheme.primary.withValues(alpha: 0.75),
-                            ),
+            ),
+            child: InkWell(
+              onTap: onTap,
+              onLongPress: onLongPress,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        BookCover(book: book),
+                        if (status != null)
+                          Positioned(
+                            top: 8,
+                            right: 8,
+                            child: _buildStatusBadge(context, status!),
+                          ),
+                        Positioned(
+                          top: 4,
+                          left: 4,
+                          child: AnimatedSwitcher(
+                            duration: motion
+                                ? const Duration(milliseconds: 200)
+                                : Duration.zero,
+                            switchInCurve: Curves.easeOutBack,
+                            transitionBuilder: (child, animation) =>
+                                ScaleTransition(scale: animation, child: child),
+                            child: selected
+                                ? _SelectionMark(
+                                    color: theme.colorScheme.primary)
+                                : IconButton.filledTonal(
+                                    tooltip: '书籍选项',
+                                    visualDensity: VisualDensity.compact,
+                                    constraints: const BoxConstraints.tightFor(
+                                      width: 34,
+                                      height: 34,
+                                    ),
+                                    icon: const Icon(Icons.more_vert, size: 19),
+                                    onPressed: onMore,
+                                  ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      SizedBox(
-                        width: 34,
-                        child: Text(
-                          '${(progressValue * 100).round()}%',
-                          textAlign: TextAlign.end,
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                )
-              else
-                const SizedBox(height: 3),
-            ],
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          book.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w600,
+                            height: 1.3,
+                          ),
+                        ),
+                        if (subtitle.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            subtitle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  if (progressValue != null)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(2),
+                              child: LinearProgressIndicator(
+                                value: progressValue,
+                                backgroundColor: theme.colorScheme.primary
+                                    .withValues(alpha: 0.12),
+                                minHeight: 4,
+                                valueColor: AlwaysStoppedAnimation(
+                                  theme.colorScheme.primary
+                                      .withValues(alpha: 0.75),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          SizedBox(
+                            width: 34,
+                            child: Text(
+                              '${(progressValue * 100).round()}%',
+                              textAlign: TextAlign.end,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  else
+                    const SizedBox(height: 3),
+                ],
+              ),
+            ),
           ),
         ),
       ),

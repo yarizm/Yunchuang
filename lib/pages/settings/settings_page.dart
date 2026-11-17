@@ -115,7 +115,7 @@ class SettingsPage extends ConsumerWidget {
                   ListTile(
                     leading: const Icon(Icons.wallpaper),
                     title: const Text('外观'),
-                    subtitle: const Text('背景样式与自定义图片'),
+                    subtitle: const Text('背景样式、自定义图片与界面动画'),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => Navigator.push(
                       context,
