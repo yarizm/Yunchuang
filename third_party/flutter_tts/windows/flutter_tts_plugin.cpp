@@ -48,16 +48,33 @@ namespace {
 		void getLanguages(flutter::EncodableList&);
 		void setLanguage(const std::string, FlutterResult&);
 		void addMplayer();
+		// [yunchuang] The upstream body of HandleMethodCall, which now wraps it.
+		void HandleEngineCall(
+			const flutter::MethodCall<flutter::EncodableValue>& method_call,
+			FlutterResult& result);
+		bool ensureEngine();
 		winrt::Windows::Foundation::IAsyncAction asyncSpeak(const std::string);
 		bool speaking();
 		bool paused();
-		SpeechSynthesizer synth;
-		winrt::Windows::Media::Playback::MediaPlayer mPlayer;
+		// [yunchuang] Start out empty: default construction activates the WinRT
+		// classes right away, see ensureEngine().
+		SpeechSynthesizer synth{ nullptr };
+		winrt::Windows::Media::Playback::MediaPlayer mPlayer{ nullptr };
+		std::string engineError;
 		bool isPaused;
 		bool isSpeaking;
 		bool awaitSpeakCompletion;
 		FlutterResult speakResult;
 	};
+
+	// [yunchuang] "0x800455A0 <system message>" for a failed WinRT call.
+	std::string describeError(winrt::hresult_error const& error) {
+		std::ostringstream text;
+		text << "0x" << std::hex << std::uppercase
+			<< static_cast<uint32_t>(error.code().value) << " "
+			<< winrt::to_string(error.message());
+		return text.str();
+	}
 
 	void FlutterTtsPlugin::RegisterWithRegistrar(
 		flutter::PluginRegistrarWindows* registrar) {
@@ -81,7 +98,7 @@ namespace {
 				Windows::Foundation::IInspectable const& args)
 				{
 				    methodChannel->InvokeMethod("speak.onComplete", NULL);
-				    if (awaitSpeakCompletion) {
+				    if (awaitSpeakCompletion && speakResult) {
                         speakResult->Success(1);
                     }
 					isSpeaking = false;
@@ -97,22 +114,33 @@ namespace {
 	}
 
 	winrt::Windows::Foundation::IAsyncAction FlutterTtsPlugin::asyncSpeak(const std::string text) {
-		SpeechSynthesisStream speechStream{
-		  co_await synth.SynthesizeTextToStreamAsync(to_hstring(text))
-		};
-		winrt::param::hstring cType = L"Audio";
-		winrt::Windows::Media::Core::MediaSource source =
-			winrt::Windows::Media::Core::MediaSource::CreateFromStream(speechStream, cType);
-		mPlayer.Source(source);
-		mPlayer.Play();
+		// [yunchuang] A failed synthesis used to vanish inside this coroutine: no
+		// audio, no completion event, and Dart waited forever.
+		try {
+			SpeechSynthesisStream speechStream{
+			  co_await synth.SynthesizeTextToStreamAsync(to_hstring(text))
+			};
+			winrt::param::hstring cType = L"Audio";
+			winrt::Windows::Media::Core::MediaSource source =
+				winrt::Windows::Media::Core::MediaSource::CreateFromStream(speechStream, cType);
+			mPlayer.Source(source);
+			mPlayer.Play();
+		}
+		catch (winrt::hresult_error const& error) {
+			isSpeaking = false;
+			methodChannel->InvokeMethod("speak.onError",
+				std::make_unique<flutter::EncodableValue>(describeError(error)));
+			if (awaitSpeakCompletion && speakResult) speakResult->Success(0);
+		}
 	}
 
 	void FlutterTtsPlugin::speak(const std::string text, FlutterResult result) {
 		isSpeaking = true;
-		auto my_task{ asyncSpeak(text) };
 		methodChannel->InvokeMethod("speak.onStart", NULL);
         if (awaitSpeakCompletion) speakResult = std::move(result);
         else result->Success(1);
+		// [yunchuang] Started last: an error it reports right away must reach Dart after speak.onStart, not before.
+		auto my_task{ asyncSpeak(text) };
 	};
 
 	void FlutterTtsPlugin::pause() {
@@ -129,7 +157,7 @@ namespace {
 
 	void FlutterTtsPlugin::stop() {
 	    methodChannel->InvokeMethod("speak.onCancel", NULL);
-        if (awaitSpeakCompletion) {
+        if (awaitSpeakCompletion && speakResult) {
             speakResult->Success(1);
         }
 
@@ -206,8 +234,10 @@ namespace {
 		VoiceInformation newVoice = synth.Voice();
 		std::for_each(begin(voices), end(voices), [&voiceLanguage, &newVoice, &found](const VoiceInformation& voice)
 			{
-				if (to_string(voice.Language()) == voiceLanguage) newVoice = voice;
-				found = true;
+				if (to_string(voice.Language()) == voiceLanguage) {
+					newVoice = voice;
+					found = true;
+				}
 			});
 		synth.Voice(newVoice);
 		if (found) result->Success(1);
@@ -216,19 +246,70 @@ namespace {
 
 
 	FlutterTtsPlugin::FlutterTtsPlugin() {
-		synth = SpeechSynthesizer();
-		addMplayer();
 		isPaused = false;
 		isSpeaking = false;
 		awaitSpeakCompletion = false;
 		speakResult = FlutterResult();
+		// [yunchuang] Still created up front like upstream, so the first use
+		// doesn't pay for it; a failure is retried on the next call.
+		ensureEngine();
 	}
 
-	FlutterTtsPlugin::~FlutterTtsPlugin() { mPlayer.Close(); }
+	FlutterTtsPlugin::~FlutterTtsPlugin() { if (mPlayer) mPlayer.Close(); }
 
+	// [yunchuang] Upstream created the synthesizer and the media player in the
+	// constructor without a try. The constructor runs while the app registers
+	// its plugins, so when the system speech runtime is broken (seen:
+	// 0x800455A0) the exception aborted the whole app before its first frame.
+	bool FlutterTtsPlugin::ensureEngine() {
+		try {
+			if (!synth) synth = SpeechSynthesizer();
+			if (!mPlayer) addMplayer();
+			engineError.clear();
+			return true;
+		}
+		catch (winrt::hresult_error const& error) {
+			engineError = describeError(error);
+		}
+		catch (std::exception const& error) {
+			engineError = error.what();
+		}
+		return false;
+	}
+
+	// [yunchuang] Errors go back to Dart: an exception escaping a method
+	// channel handler terminates the app.
 	void FlutterTtsPlugin::HandleMethodCall(
 		const flutter::MethodCall<flutter::EncodableValue>& method_call,
 		FlutterResult result) {
+		const std::string& method = method_call.method_name();
+		const bool needsEngine =
+			method != "getPlatformVersion" && method != "awaitSpeakCompletion";
+		if (needsEngine && !ensureEngine()) {
+			// Nothing can be playing without an engine.
+			if (method == "stop" || method == "pause") {
+				result->Success(1);
+				return;
+			}
+			result->Error("tts_unavailable",
+				"Windows speech engine failed to start: " + engineError);
+			return;
+		}
+		try {
+			HandleEngineCall(method_call, result);
+		}
+		catch (winrt::hresult_error const& error) {
+			// speak() takes the result over before anything can throw.
+			if (result) result->Error("tts_error", describeError(error));
+		}
+		catch (std::exception const& error) {
+			if (result) result->Error("tts_error", error.what());
+		}
+	}
+
+	void FlutterTtsPlugin::HandleEngineCall(
+		const flutter::MethodCall<flutter::EncodableValue>& method_call,
+		FlutterResult& result) {
 		if (method_call.method_name().compare("getPlatformVersion") == 0) {
 			std::ostringstream version_stream;
 			version_stream << "Windows UWP";

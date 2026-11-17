@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:mocktail/mocktail.dart';
@@ -117,6 +118,31 @@ void main() {
     expect(service.defaultLanguage, 'en-US');
     expect(service.language, 'en-US');
     verify(() => flutterTts.setLanguage('en-US')).called(1);
+  });
+
+  test('explains a system engine that failed to start and retries on play',
+      () async {
+    // third_party/flutter_tts 在 Windows 上建不起语音引擎时回 tts_unavailable，
+    // 下一次调用会重新尝试。
+    var engineUp = false;
+    when(() => flutterTts.getLanguages).thenAnswer((_) async {
+      if (engineUp) return ['zh-CN'];
+      throw PlatformException(
+        code: 'tts_unavailable',
+        message: 'Windows speech engine failed to start: 0x800455A0',
+      );
+    });
+    final service = TTSService(flutterTts: flutterTts);
+    addTearDown(service.dispose);
+
+    expect(await service.ensureInitialized(), isFalse);
+    expect(service.status, TTSStatus.error);
+    expect(service.lastError, contains('外部语音服务'));
+    expect(service.lastError, contains('0x800455A0'));
+
+    engineUp = true;
+    expect(await service.play('第一段。'), isTrue);
+    verify(() => flutterTts.speak('第一段。')).called(1);
   });
 
   test('keeps playback active while applying a different voice', () async {

@@ -69,6 +69,11 @@ dependencies:
   wakelock_plus: ^1.2.4
   audioplayers: ^6.8.1
 
+dependency_overrides:
+  # 打过补丁的 4.2.5：系统语音起不来时原版在 Windows 上启动就崩，见 third_party/README.md
+  flutter_tts:
+    path: third_party/flutter_tts
+
 hooks:
   user_defines:
     sqlite3:

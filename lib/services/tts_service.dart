@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 
@@ -332,6 +332,15 @@ class TTSService extends ChangeNotifier {
       await _tts.setPitch(1);
       await _loadVoices();
       return null;
+    } on PlatformException catch (error) {
+      // 打过补丁的 flutter_tts（third_party/flutter_tts）在 Windows 上建不起
+      // 系统语音引擎时回这个错误码，原版是直接让整个应用退出。
+      if (error.code == 'tts_unavailable') {
+        return '系统语音引擎启动失败，暂时不能用系统朗读。'
+            '可以在「设置 → TTS 设置」里改用外部语音服务。'
+            '（${error.message}）';
+      }
+      return 'TTS 初始化失败：$error';
     } catch (error) {
       return 'TTS 初始化失败：$error';
     }
