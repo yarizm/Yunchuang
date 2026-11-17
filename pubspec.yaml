@@ -26,6 +26,10 @@ dependencies:
   # 升级 drift 时改这两处版本号，同时本地重跑 build_runner 并提交生成结果。
   drift: 2.34.0
   sqlite3_flutter_libs: ^0.5.0
+  # 同样精确钉死：third_party/sqlite3 里的预编译库只对应这一个版本，构建钩子
+  # 按该版本记录的哈希校验。CI 上 lock 作废后会解析出更新的 sqlite3，哈希
+  # 对不上，构建失败。升级时改这里，再跑 tool/fetch_sqlite3.ps1，一起提交。
+  sqlite3: 3.3.3
 
   # HTTP
   dio: ^5.4.3+1

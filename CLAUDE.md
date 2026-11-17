@@ -132,7 +132,7 @@ Drift ORM（`drift` + `sqlite3_flutter_libs`），数据库文件 `reading_offli
 有两样依赖放进了仓库，构建时不联网下载，详细说明见 `third_party/README.md`：
 
 - `third_party/flutter_tts`：4.2.5 加补丁，通过 `dependency_overrides` 引用。原版 Windows 插件在注册时就创建系统语音对象，系统语音运行时出问题就抛异常，应用启动即退出。补丁改为失败时返回 `tts_unavailable`，下次调用时重试。改动只在 `windows/flutter_tts_plugin.cpp`，都标了 `[yunchuang]`。升级 flutter_tts 前先看上游修没修。
-- `third_party/sqlite3`：sqlite3 包构建钩子要用的预编译库，包括 Windows x64、Android 三种 ABI 和 CI 用的 Linux x64。`hooks.user_defines` 让钩子读这里，不从 GitHub 下载：下载地址写死在钩子里，换不了镜像，GitHub 在这边又时常连不上。钩子会按包里记录的 SHA-256 校验文件。升级 sqlite3（drift 常带着它一起升）后，构建会报哈希不对，这时跑 `.\tool\fetch_sqlite3.ps1`：GitHub 连不上时它会依次换镜像，下载的文件都要通过哈希校验。
+- `third_party/sqlite3`：sqlite3 包构建钩子要用的预编译库，包括 Windows x64、Android 三种 ABI 和 CI 用的 Linux x64。`hooks.user_defines` 让钩子读这里，不从 GitHub 下载：下载地址写死在钩子里，换不了镜像，GitHub 在这边又时常连不上。钩子会按包里记录的 SHA-256 校验文件。因此 sqlite3 在 `pubspec.yaml` 里精确钉死了版本：和 drift 一样，CI 上 lock 会作废，不钉就会解析出别的版本，哈希对不上（v1.0.4 发版前 CI 就这样挂过一次）。升级时先改钉住的版本号，跑 `flutter pub get`，再跑 `.\tool\fetch_sqlite3.ps1`：GitHub 连不上时它会依次换镜像，下载的文件都要通过哈希校验。
 
 `third_party/**` 不参与 `flutter analyze`。
 

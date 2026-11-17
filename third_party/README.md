@@ -33,10 +33,12 @@ drift 依赖的 `sqlite3` 包带有构建钩子，`flutter build`、`flutter run
 - Android arm、arm64、x64
 - Linux x64（CI 在 Linux 上跑 `flutter test` 时使用）
 
-**升级 sqlite3 包之后**（drift 升级时常会带着它一起升），构建会报 `Hash of downloaded file ... expected ...`。这时运行：
+这些文件只对应一个 sqlite3 版本，所以 `pubspec.yaml` 把 sqlite3 精确钉死了。不钉的话，CI 会解析出别的版本：本地 pubspec.lock 记的源是 pub 中国镜像，CI 走 pub.dev，源对不上，整份 lock 就作废了。版本一变，钩子校验哈希就会失败（`Hash of downloaded file ... expected ...`）。
+
+**升级 sqlite3** 时，先改 `pubspec.yaml` 里钉的版本号，跑 `flutter pub get`，再运行：
 
 ```powershell
 .\tool\fetch_sqlite3.ps1
 ```
 
-脚本会按新版本的哈希表重新下载。GitHub 连不上时，它会依次改用 ghfast.top、gh-proxy.com、ghproxy.net 这几个镜像，每个下载下来的文件都要先通过哈希校验。下载完成后，提交这个目录。镜像失效时，直接修改脚本里的列表。
+脚本会按新版本的哈希表重新下载。GitHub 连不上时，它会依次改用 ghfast.top、gh-proxy.com、ghproxy.net 这几个镜像，每个下载下来的文件都要先通过哈希校验。下载完成后，把这个目录和 pubspec 的改动一起提交。镜像失效时，直接修改脚本里的列表。

@@ -1,8 +1,8 @@
 ﻿# 把 sqlite3 包构建钩子要用的预编译库下载到 third_party/sqlite3/。
 #
 # 构建时钩子直接读这个目录（pubspec.yaml 的 hooks.user_defines），不再去 GitHub
-# 下载。sqlite3 包升级以后（drift 升级常会带上它），构建会报
-# 「Hash of downloaded file ... expected ...」，跑一遍这个脚本，把新文件提交上去。
+# 下载。sqlite3 的版本在 pubspec.yaml 里钉死了；改了那个版本号、跑过
+# flutter pub get 之后，跑一遍这个脚本，把新文件和版本号一起提交。
 #
 # 先试 GitHub 直连，连不上再依次试镜像。不管从哪下载，都按 sqlite3 包里记录的
 # SHA-256 校验，对不上就换下一个源；构建钩子拿到文件后还会再校验一遍。
