@@ -215,9 +215,22 @@ UI 在 `widgets/ai_chat_panel.dart`（阅读器内嵌）和 `pages/ai/ai_chat_pa
 
 **正文纸张**（`ReaderPaper` + `theme/reader_theme.dart` 的 `readerThemeFor`）独立于全局主题：想黑底白字读书，不必把书架和设置页一起变暗。实现方式是给阅读器子树套一层 `Theme`，覆盖 `colorScheme` 的 surface 家族与 `textTheme`——阅读器上下几十个部件都从这两处取色，覆盖来源比给每个部件加参数省事，工具栏和目录面板也会自动跟着换。自定义底色只让用户选底色，字色由 `ReaderPaper.foregroundFor` 按对比度推，保证 WCAG AA；`textTheme` 必须一起覆盖，因为 `AppTheme` 是用 `.apply(bodyColor:)` 把字色写死进去的。
 
+## 界面动画
+
+设置 → 外观 →「界面动画」（偏好 `enhancedAnimations`，默认开；系统开了「移除动画」时一律不播）。开关由 `MaterialApp.builder` 里的 `AppMotion`（`theme/app_motion.dart`）往下传，各处用 `AppMotion.of(context)` 读；找不到这一层（单独测某个部件）按关闭算。
+
+- 页面切换：`GlassPageRoute` 开着时从下方升起淡入、退出时沉下淡出。书架打开书时传 `expandFrom`（卡片的全局矩形）和 `expandColor`（纸张色），一张纸从书封处张开，正文随后露出来。
+- 底部 Tab：`AnimatedBranchContainer` 替换 go_router 默认的 IndexedStack，旧页先淡出、新页再升起淡入。
+- 点按：`PressScale`（卡片按下缩小、松手回弹，用 Listener 不进手势竞技场）；书架多选时选中的卡片收一点；底栏选中的图标弹一下。
+- 换章：翻页模式的 `ChapterTransition`，旧章先淡出、新章再滑入淡入。页面不铺底色，两章同时以较高的不透明度画出来字会叠在一起。
+
+**开关只改参数，不改部件树的形状。** 开关两边返回不同结构的话，用户一拨开关下面整棵子树就会被卸载重建（开关所在的外观页本身就是推入的路由）。路由的转场在 `install()` 时就定下来，之后拨开关不影响已经打开的页面。
+
+**转场里不要缩放整页、不要给整页做淡入、不要用抗锯齿的圆角裁剪。** profile 版实测（165Hz 屏，一帧预算 6ms）：缩放让满屏汉字每帧按新大小重新光栅化，一帧 30～75ms；整页放进透明度图层每帧离屏重画，30～40ms；抗锯齿圆角裁剪同样贵。所以打开书是「不透明的页面在下、纸在上，纸张开之后自己变透明」，页面只做硬边裁剪，圆角由纸来画。路由动画的状态要听 `controller` 而不是 `animation`：推入后第一帧 Navigator 把新页面放在 offstage 给 Hero 量尺寸，这时 `animation` 代理会报一次假的 completed。打开书开头那几帧的卡顿（阅读页初始化、首次光栅化字形）关掉动画也有，不是转场带来的。见 `test/theme/app_motion_test.dart`。
+
 ## 测试
 
-120 个测试文件，覆盖 database / models / pages / parsers / providers / services / utils / widgets。提交前应确保 `flutter analyze` 无告警、`flutter test` 全绿。
+126 个测试文件，覆盖 database / models / pages / parsers / providers / services / utils / widgets。提交前应确保 `flutter analyze` 无告警、`flutter test` 全绿。
 
 性能相关测试（`reader_performance_test.dart`、`home_shelf_performance_test.dart`）约束重建次数，修改阅读器或书架渲染逻辑时容易触发失败，需认真对待而非直接调整阈值。另见 `PERFORMANCE.md`。
 
