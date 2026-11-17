@@ -58,9 +58,30 @@ class TxtParser {
     r'^([零〇一二两三四五六七八九十百千万]{1,12})'
     r'(?:\s*$|(?:[.．、:：]\s*|\s+)(\S.{0,49})?)$',
   );
-  static final RegExp _specialHeadingPattern = RegExp(
-    r'^(序章|序言|前言|楔子|引子|终章|尾声|后记|番外(?:篇)?|附录)$',
-  );
+  static final RegExp _specialHeadingPattern =
+      _keywordHeadingPattern('序章|序言|前言|楔子|引子|终章|尾声|后记|附录');
+  static final RegExp _extraHeadingPattern =
+      _keywordHeadingPattern('(?:番外|外传|外傳)[篇卷]?');
+
+  /// 以固定词开头、不带「第」的标题行：这个词单独成行，或者后面先跟编号或
+  /// 分隔符再接小标题——「番外一 春日宴」「番外2：重逢」「番外篇·婚后」
+  /// 「【番外】雪夜」「番外（五）」「番外之一夜白头」「序章 风起」「尾声：归来」。
+  ///
+  /// 词后面直接接字的不算：「番外一直没写完」「番外明天更新」「门外传来」
+  /// 「前言不搭后语」都是正文。「之」后面接「后/前/类」这些字也是叙述
+  /// （「番外之后……」）。逗号不算分隔符，「番外，明天更新」是作者的话。
+  static RegExp _keywordHeadingPattern(String keywords) => RegExp(
+        '^[$_headingDecorations]*\\s*(?:$keywords)'
+        '(?:\\s*之?\\s*第?\\s*[(（]?\\s*[$_chineseNumber]+\\s*[)）]?'
+        '\\s*[章话回篇节幕]?)?'
+        '(?:\\s*\$|(?:[$_headingSeparators]|之(?![后前类中外余间际]))+'
+        r'(.{0,60})$)',
+      );
+  static const String _headingDecorations =
+      r'【\[〔［《〈「『<＜(（★☆◆◇■□●○◎※#＃*＊=＝~～\-－—';
+  static const String _headingSeparators =
+      r'\s:：\-－_.．、·・•—~～|｜/()（）\[\]［］【】〔〕《》〈〉「」『』<>＜＞'
+      r'★☆◆◇■□●○◎※#＃*＊=＝';
 
   /// 标题后面直接跟这些词，说明这一行是正文在提「第几章」，不是标题。
   ///
@@ -199,7 +220,8 @@ class TxtParser {
           (line.length <= 80 &&
               (_strongExplicitHeadingPattern.hasMatch(line) ||
                   _englishHeadingPattern.hasMatch(line) ||
-                  _specialHeadingPattern.hasMatch(line)))) {
+                  _isSpecialHeading(line) ||
+                  _isExtraHeading(line)))) {
         break;
       }
       lines.add(line);
@@ -208,6 +230,19 @@ class TxtParser {
   }
 
   static bool _isSeparatorLine(String line) => _separatorLine.hasMatch(line);
+
+  static bool _isSpecialHeading(String line) =>
+      _isKeywordHeading(_specialHeadingPattern, line);
+
+  static bool _isExtraHeading(String line) =>
+      _isKeywordHeading(_extraHeadingPattern, line);
+
+  static bool _isKeywordHeading(RegExp pattern, String line) {
+    if (line.length > 80) return false;
+    final match = pattern.firstMatch(line);
+    return match != null &&
+        !_looksLikeProseTitledLine(match.group(1) ?? '', strong: true);
+  }
 
   static String? _labeledAuthor(String line) {
     final match = _authorLabel.firstMatch(line);
@@ -249,8 +284,10 @@ class TxtParser {
       final explicit =
           line.length <= 80 ? _explicitHeadingPattern.firstMatch(line) : null;
       if (explicit != null) {
-        final strong = _strongExplicitHeadingPattern.hasMatch(line);
         final suffix = explicit.group(3) ?? '';
+        // 「第101章番外一」：标记后面贴着番外，没有分隔符也是正经标题。
+        final strong = _strongExplicitHeadingPattern.hasMatch(line) ||
+            _isExtraHeading(suffix);
         if (!_looksLikeEndMarker(suffix) &&
             !_looksLikeProseTitledLine(suffix, strong: strong)) {
           candidates.add(
@@ -297,11 +334,22 @@ class TxtParser {
         continue;
       }
 
-      if (line.length <= 80 && _specialHeadingPattern.hasMatch(line)) {
+      if (_isSpecialHeading(line)) {
         candidates.add(
           _HeadingCandidate(
             start: match.start + _leadingWhitespaceLength(match.group(0)!),
             kind: _HeadingKind.special,
+            strong: true,
+          ),
+        );
+        continue;
+      }
+
+      if (_isExtraHeading(line)) {
+        candidates.add(
+          _HeadingCandidate(
+            start: match.start + _leadingWhitespaceLength(match.group(0)!),
+            kind: _HeadingKind.extra,
             strong: true,
           ),
         );
@@ -466,6 +514,8 @@ class TxtParser {
           (item) => item.kind == _HeadingKind.section && item.strong,
         )
         .length;
+    final extraCount =
+        candidates.where((item) => item.kind == _HeadingKind.extra).length;
 
     Set<_HeadingKind> selectedKinds;
     _HeadingKind? strongOnlyKind;
@@ -506,6 +556,9 @@ class TxtParser {
         _HeadingKind.section,
         _HeadingKind.numeric,
       };
+    } else if (extraCount >= 2) {
+      // 单独下载的番外合集：没有正章，只有「番外一」「番外二」……
+      selectedKinds = const {};
     } else {
       return const [];
     }
@@ -515,7 +568,8 @@ class TxtParser {
           (candidate) =>
               (selectedKinds.contains(candidate.kind) &&
                   (candidate.kind != strongOnlyKind || candidate.strong)) ||
-              candidate.kind == _HeadingKind.special,
+              candidate.kind == _HeadingKind.special ||
+              candidate.kind == _HeadingKind.extra,
         )
         .toList()
       ..sort((a, b) => a.start.compareTo(b.start));
@@ -550,6 +604,10 @@ enum _HeadingKind {
   numeric,
   volume,
   special,
+
+  /// 番外、外传。和 [special] 一样不论本书用哪种标题都收，
+  /// 另外整本只有番外（≥ 2 个）时也按它分章。
+  extra,
 }
 
 class _HeadingCandidate {

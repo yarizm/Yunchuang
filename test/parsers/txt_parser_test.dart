@@ -281,6 +281,150 @@ This is the second chapter.
       expect(chapters.last.title, '尾声');
     });
 
+    test('splits extra chapters that carry a number or a subtitle', () {
+      const text = '''
+第一章 开始
+正文一。
+
+第二章 结局
+正文二。
+
+番外一 春日宴
+番外正文一。
+
+番外2：重逢
+番外正文二。
+
+番外篇·婚后
+番外正文三。
+
+【番外】雪夜
+番外正文四。
+
+番外（五）
+番外正文五。
+
+番外之一夜白头
+番外正文六。
+
+番外篇 第1章 归来
+番外正文七。
+
+番外
+番外正文八。
+
+外传 少年游
+外传正文。''';
+
+      final chapters = TxtParser.parseChapters(text);
+      expect(chapters.map((chapter) => chapter.title), [
+        '第一章 开始',
+        '第二章 结局',
+        '番外一 春日宴',
+        '番外2：重逢',
+        '番外篇·婚后',
+        '【番外】雪夜',
+        '番外（五）',
+        '番外之一夜白头',
+        '番外篇 第1章 归来',
+        '番外',
+        '外传 少年游',
+      ]);
+      expect(chapters[1].content, '正文二。');
+      expect(chapters[2].content, '番外正文一。');
+      expect(chapters.last.content, '外传正文。');
+    });
+
+    test('does not split on prose lines that start with heading words', () {
+      const text = '''
+第一章 开始
+番外一直没写完
+番外两个人去了海边
+番外之后还会有新书
+番外，明天更新
+番外篇什么时候出
+外传来一阵喧哗声
+番外：今天先写到这里。
+前言不搭后语
+尾声，大家都散了
+
+第二章 结局
+正文二。''';
+
+      final chapters = TxtParser.parseChapters(text);
+      expect(chapters.map((chapter) => chapter.title), [
+        '第一章 开始',
+        '第二章 结局',
+      ]);
+      expect(chapters.first.content, contains('外传来一阵喧哗声'));
+      expect(chapters.first.content, contains('番外：今天先写到这里。'));
+      expect(chapters.first.content, contains('尾声，大家都散了'));
+    });
+
+    test('accepts a chapter marker glued to 番外 in a strong-heading book', () {
+      const text = '''
+第一章 开始
+正文一。
+
+第二章 结局
+正文二。
+
+第三章番外一
+番外正文。''';
+
+      final chapters = TxtParser.parseChapters(text);
+      expect(chapters.map((chapter) => chapter.title), [
+        '第一章 开始',
+        '第二章 结局',
+        '第三章番外一',
+      ]);
+      expect(chapters[1].content, '正文二。');
+    });
+
+    test('keeps special headings that carry a subtitle', () {
+      const text = '''
+序章 风起
+序章正文。
+
+第一章 开始
+正文一。
+
+第二章 结局
+正文二。
+
+尾声：归来
+尾声正文。''';
+
+      final chapters = TxtParser.parseChapters(text);
+      expect(chapters.map((chapter) => chapter.title), [
+        '序章 风起',
+        '第一章 开始',
+        '第二章 结局',
+        '尾声：归来',
+      ]);
+      expect(chapters.first.content, '序章正文。');
+      expect(chapters[2].content, '正文二。');
+    });
+
+    test('splits a file that only holds extra chapters', () {
+      const text = '''
+某某番外合集
+作者：某人
+
+番外一 春日宴
+番外正文一。
+
+番外二 冬雪
+番外正文二。''';
+
+      final chapters = TxtParser.parseChapters(text);
+      expect(chapters.map((chapter) => chapter.title), [
+        '番外一 春日宴',
+        '番外二 冬雪',
+      ]);
+      expect(chapters.last.content, '番外正文二。');
+    });
+
     test('extracts title and author from first two non-empty lines', () {
       const text = '我的书名\n作者名\n\n第一章\n内容';
       final meta = TxtParser.parseMetadata(text);
@@ -459,6 +603,15 @@ This is the second chapter.
       expect(parse('楔子\n正文。').title, '文件名');
       expect(parse('').title, '文件名');
       expect(parse('他推开门，屋里没有人。\n第一章 开始').title, '文件名');
+    });
+
+    test('falls back to the file name when the text opens with an extra', () {
+      final metadata = TxtParser.parseMetadata(
+        '番外一 春日宴\n番外正文。',
+        fallbackTitle: '某某番外',
+      );
+      expect(metadata.title, '某某番外');
+      expect(metadata.author, '');
     });
 
     test('reads an English "by" line after the title', () {
