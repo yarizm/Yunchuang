@@ -138,14 +138,124 @@ void main() {
     expect(await File(replaced.filePath).exists(), isTrue);
     final progress =
         await database.select(database.readingProgress).getSingle();
+    final newChapter = await database.select(database.chapters).getSingle();
     expect(progress.percentage, 0.5);
-    expect(progress.chapterId, isNull);
-    expect((await database.select(database.notes).getSingle()).content, '保留笔记');
+    // 换文件会删掉旧章节；进度和笔记要挂到新章节上，不能回到第一章。
+    expect(progress.chapterId, newChapter.id);
+    final note = await database.select(database.notes).getSingle();
+    expect(note.content, '保留笔记');
+    expect(note.chapterId, newChapter.id);
     expect(
       (await database.select(database.bookCollectionItems).getSingle())
           .collectionId,
       collectionId,
     );
+  });
+
+  test('resplits a TXT book and moves progress, bookmarks, notes and words',
+      () async {
+    const fakeBody = '众人一阵欢呼。明月点了点头，转身看向下一场的对手。';
+    const text = '第一百四十三章 玉米地的爱恋\n'
+        '正文一。\n'
+        '1：0，顺利斩杀这支叫做聚义轩的流派\n'
+        '$fakeBody\n'
+        '\n'
+        '第一百四十四章 水云谣\n'
+        '正文二。水云谣的曲子从远处传来。';
+    final source = await _writeSource(directory, 'book.txt', text);
+    final book = await service.importBook(source.path);
+    final dao = BookDao(database);
+    // 旧规则切出来的样子：「1：0……」那一行被当成了一章。
+    const oldSplit = [
+      ('第一百四十三章 玉米地的爱恋', '正文一。'),
+      ('1：0，顺利斩杀这支叫做聚义轩的流派', fakeBody),
+      ('第一百四十四章 水云谣', '正文二。水云谣的曲子从远处传来。'),
+    ];
+    await dao.replaceBookContent(
+      book.id,
+      BooksCompanion(updatedAt: Value(DateTime.now())),
+      [
+        for (final (index, (title, content)) in oldSplit.indexed)
+          (int id) => ChaptersCompanion.insert(
+                bookId: id,
+                title: title,
+                content: Value(content),
+                contentIndex: index,
+                sortOrder: index,
+              ),
+      ],
+    );
+    final old = await dao.getChapterSummariesForBook(book.id);
+    final at = fakeBody.indexOf('明月');
+    await database.into(database.readingProgress).insert(
+          ReadingProgressCompanion.insert(
+            bookId: Value(book.id),
+            chapterId: Value(old[1].id),
+            positionInChapter: Value(at / fakeBody.length),
+            percentage: const Value(0.4),
+          ),
+        );
+    final noteId = await database.into(database.notes).insert(
+          NotesCompanion.insert(
+            bookId: book.id,
+            chapterId: Value(old[1].id),
+            selectedText: const Value('明月'),
+            positionStart: Value(at),
+            positionEnd: Value(at + 2),
+          ),
+        );
+    final bookmarkId = await database.into(database.notes).insert(
+          NotesCompanion.insert(
+            bookId: book.id,
+            chapterId: Value(old[1].id),
+            type: const Value('bookmark'),
+            positionStart: Value((at / fakeBody.length * 10000).round()),
+          ),
+        );
+    final wordId = await database.into(database.vocabularyEntries).insert(
+          VocabularyEntriesCompanion.insert(
+            bookId: book.id,
+            chapterId: Value(old[2].id),
+            term: '水云谣',
+            normalizedTerm: '水云谣',
+            positionStart: const Value(4),
+            positionEnd: const Value(7),
+          ),
+        );
+
+    final result = await service.resplitBook(book.id);
+
+    expect(result, (before: 3, after: 2));
+    final chapters = await dao.getChapterSummariesForBook(book.id);
+    expect(chapters.map((chapter) => chapter.title), [
+      '第一百四十三章 玉米地的爱恋',
+      '第一百四十四章 水云谣',
+    ]);
+    final first = (await dao.getChapterContent(chapters[0].id))!;
+    final newAt = first.indexOf('明月');
+
+    final progress =
+        await database.select(database.readingProgress).getSingle();
+    expect(progress.chapterId, chapters[0].id);
+    expect(progress.positionInChapter, closeTo(newAt / first.length, 1e-9));
+    expect(progress.percentage, 0.4);
+
+    Future<Note> noteById(int id) =>
+        (database.select(database.notes)..where((n) => n.id.equals(id)))
+            .getSingle();
+    final note = await noteById(noteId);
+    expect(note.chapterId, chapters[0].id);
+    expect(first.substring(note.positionStart!, note.positionEnd!), '明月');
+    final bookmark = await noteById(bookmarkId);
+    expect(bookmark.chapterId, chapters[0].id);
+    expect(bookmark.positionStart, (newAt / first.length * 10000).round());
+
+    final word = await (database.select(database.vocabularyEntries)
+          ..where((entry) => entry.id.equals(wordId)))
+        .getSingle();
+    expect(word.chapterId, chapters[1].id);
+    expect(word.positionStart, 4);
+    expect(word.positionEnd, 7);
   });
 
   test('discovers supported books recursively in a folder', () async {

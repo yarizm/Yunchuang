@@ -703,6 +703,16 @@ class HomePage extends ConsumerWidget {
                   _showEditBookDialog(context, ref, book);
                 },
               ),
+              if (book.format == 'txt')
+                ListTile(
+                  leading: const Icon(Icons.format_list_numbered),
+                  title: const Text('重新分章'),
+                  subtitle: const Text('按最新的规则重新识别章节'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _confirmResplit(context, ref, book);
+                  },
+                ),
               ListTile(
                 leading: const Icon(Icons.delete, color: Colors.red),
                 title: const Text('删除书籍', style: TextStyle(color: Colors.red)),
@@ -755,6 +765,78 @@ class HomePage extends ConsumerWidget {
         SnackBar(content: Text('删除失败：$error')),
       );
     }
+  }
+
+  /// 章节是导入时切好存进数据库的，分章规则改进以后，已经导入的书不会
+  /// 自己变。这里用应用里存的那份文件重新切一遍。
+  void _confirmResplit(BuildContext context, WidgetRef ref, Book book) {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('重新分章'),
+        content: Text(
+          '按最新的规则重新识别《${book.title}》的章节。'
+          '阅读位置、书签、笔记会跟着挂到新的章节上。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              unawaited(_resplitBook(context, ref, book));
+            },
+            child: const Text('重新分章'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _resplitBook(
+    BuildContext context,
+    WidgetRef ref,
+    Book book,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context, rootNavigator: true);
+    // 几百万字的书要切好几秒，这期间别让人打开它。
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        useRootNavigator: true,
+        builder: (_) => const PopScope(
+          canPop: false,
+          child: AlertDialog(
+            content: Row(
+              children: [
+                SizedBox.square(
+                  dimension: 24,
+                  child: CircularProgressIndicator(strokeWidth: 2.5),
+                ),
+                SizedBox(width: 16),
+                Expanded(child: Text('正在重新分章…')),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    String message;
+    try {
+      final result =
+          await ref.read(booksProvider.notifier).resplitBook(book.id);
+      message = result.before == result.after
+          ? '重新分章完成，共 ${result.after} 章'
+          : '重新分章完成：${result.before} 章 → ${result.after} 章';
+    } catch (error) {
+      message = '重新分章失败：$error';
+    }
+    navigator.pop();
+    messenger.showSnackBar(SnackBar(content: Text(message)));
   }
 
   IconData _sortIcon(BookSortMode mode) {

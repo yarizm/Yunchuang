@@ -6,6 +6,7 @@ import '../models/book_reading_status.dart';
 import '../models/book_shelf_options.dart';
 import '../services/book_service.dart';
 import 'database_provider.dart';
+import 'note_provider.dart';
 import 'preferences_provider.dart';
 
 final shelfStatusFilterProvider = StateProvider<BookReadingStatus?>(
@@ -170,6 +171,17 @@ class BooksNotifier extends AsyncNotifier<List<Book>> {
       state = AsyncValue.error(error, stackTrace);
       rethrow;
     }
+  }
+
+  /// 按现在的分章规则重新切一本 TXT。失败往上抛，调用方要给用户报错。
+  Future<({int before, int after})> resplitBook(int bookId) async {
+    final result = await ref.read(bookServiceProvider).resplitBook(bookId);
+    // 笔记挂到了新章节上，笔记列表里的章节要重新读。
+    ref
+      ..invalidate(allNotesProvider)
+      ..invalidate(notesForBookProvider(bookId))
+      ..invalidateSelf();
+    return result;
   }
 
   Future<void> updateBookMetadata(

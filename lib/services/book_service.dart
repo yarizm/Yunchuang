@@ -13,6 +13,7 @@ import '../parsers/epub_parser.dart';
 import '../parsers/pdf_parser.dart';
 import '../utils/text_file_decoder.dart';
 import '../utils/app_data_directory.dart';
+import 'chapter_relocation.dart';
 
 typedef BookAppDirectoryProvider = Future<Directory> Function();
 
@@ -32,6 +33,19 @@ class BookImportAnalysis {
   });
 
   bool get isDuplicate => existingBook != null;
+}
+
+/// 换章节时要挂回去的一样东西：它在旧章节上的位置，和挂回去的写法
+/// （拿到新章节 id、新位置、新章节正文长度）。
+class _ChapterMove {
+  const _ChapterMove(this.position, this.apply);
+
+  final ChapterPosition position;
+  final Future<void> Function(
+    int chapterId,
+    ChapterPosition moved,
+    int newLength,
+  ) apply;
 }
 
 class _PreparedImport {
@@ -160,7 +174,7 @@ class BookService {
     try {
       final chapterFactories = _chapterFactories(prepared);
       if (replacing) {
-        await _bookDao.replaceBookContent(
+        await _replaceChapters(
           existing.id,
           BooksCompanion(
             filePath: Value(prepared.storedPath),
@@ -169,6 +183,7 @@ class BookService {
             fileHash: Value(resolved.fileHash),
             updatedAt: Value(DateTime.now()),
           ),
+          prepared.chapters,
           chapterFactories,
         );
         await _deleteFileBestEffort(existing.filePath);
@@ -284,14 +299,229 @@ class BookService {
     }
   }
 
+  /// 按现在的分章规则重新切一本 TXT，用应用里存的那份文件，不用再找原文件。
+  ///
+  /// 章节是导入时切好存进数据库的，分章规则改进以后，已经导入的书不会自己
+  /// 变。返回切之前和切之后的章数。
+  Future<({int before, int after})> resplitBook(int bookId) async {
+    final book = await _bookDao.getBookById(bookId);
+    if (book == null) throw StateError('书籍不存在');
+    if (book.format != 'txt') {
+      throw UnsupportedError('只有 TXT 是按规则分章的');
+    }
+    if (!await File(book.filePath).exists()) {
+      throw FileSystemException('书籍文件不存在', book.filePath);
+    }
+    final content = await TextFileDecoder.readAsString(
+      book.filePath,
+      normalizeToUtf8: true,
+    );
+    final chapters = await Isolate.run(() => TxtParser.parseChapters(content));
+    final before = (await _bookDao.getChapterSummariesForBook(bookId)).length;
+    await _replaceChapters(
+      bookId,
+      BooksCompanion(updatedAt: Value(DateTime.now())),
+      chapters,
+      _chapterFactoriesFor(chapters, format: book.format),
+    );
+    return (before: before, after: chapters.length);
+  }
+
+  /// 换掉一本书的全部章节，阅读进度、书签、笔记、生词跟着挂到新章节上。
+  ///
+  /// 删旧章节时外键会把它们的章节号置空。之前「替换文件」就停在那一步：
+  /// 再打开书回到第一章，笔记、高亮全都没了位置。现在按原文把位置找回来，
+  /// 见 [relocateChapterPositions]。
+  Future<void> _replaceChapters(
+    int bookId,
+    BooksCompanion bookChanges,
+    List<ParsedChapter> parsedChapters,
+    List<ChaptersCompanion Function(int bookId)> chapterFactories,
+  ) async {
+    final oldChapters = await _bookDao.getChapterSummariesForBook(bookId);
+    final oldIndexById = {
+      for (var index = 0; index < oldChapters.length; index++)
+        oldChapters[index].id: index,
+    };
+    final progress = await _bookDao.getProgress(bookId);
+    final notes = await _bookDao.notesOnChapters(bookId);
+    final words = await _bookDao.vocabularyOnChapters(bookId);
+
+    // 只读被挂着的那几章正文。
+    final contents = <int, String>{};
+    for (final chapterId in {
+      if (progress?.chapterId != null) progress!.chapterId!,
+      for (final note in notes) note.chapterId!,
+      for (final word in words) word.chapterId!,
+    }) {
+      contents[chapterId] = await _bookDao.getChapterContent(chapterId) ?? '';
+    }
+    int lengthOf(int chapterId) => contents[chapterId]?.length ?? 0;
+
+    final moves = <_ChapterMove>[];
+    final progressChapter = oldIndexById[progress?.chapterId];
+    if (progress != null && progressChapter != null) {
+      final length = lengthOf(progress.chapterId!);
+      final ratio = progress.positionInChapter.clamp(0.0, 1.0);
+      moves.add(
+        _ChapterMove(
+          ChapterPosition(
+            chapterIndex: progressChapter,
+            start: (ratio * length).round(),
+            approximate: true,
+          ),
+          (chapterId, moved, newLength) => _bookDao.moveProgress(
+            bookId,
+            chapterId,
+            length == 0 || newLength == 0
+                ? progress.positionInChapter
+                : moved.start / newLength,
+          ),
+        ),
+      );
+    }
+    for (final note in notes) {
+      final index = oldIndexById[note.chapterId];
+      if (index == null) continue;
+      final start = note.positionStart;
+      if (note.type == 'bookmark') {
+        // 书签的 positionStart 是章内比例乘 10000，不是字符偏移。
+        final length = lengthOf(note.chapterId!);
+        final ratio = ((start ?? 0) / 10000).clamp(0.0, 1.0);
+        moves.add(
+          _ChapterMove(
+            ChapterPosition(
+              chapterIndex: index,
+              start: (ratio * length).round(),
+              approximate: true,
+            ),
+            (chapterId, moved, newLength) => _bookDao.moveNote(
+              note.id,
+              chapterId,
+              positionStart: Value(
+                length == 0 || newLength == 0
+                    ? start
+                    : (moved.start / newLength * 10000).round(),
+              ),
+            ),
+          ),
+        );
+      } else if (start != null) {
+        moves.add(
+          _ChapterMove(
+            ChapterPosition(
+              chapterIndex: index,
+              start: start,
+              end: note.positionEnd,
+              text: note.selectedText,
+            ),
+            (chapterId, moved, _) => _bookDao.moveNote(
+              note.id,
+              chapterId,
+              positionStart: Value(moved.start),
+              positionEnd: Value(moved.end),
+            ),
+          ),
+        );
+      } else {
+        // 只挂在章上、没有位置的笔记：找到原文所在的那章就行。
+        moves.add(
+          _ChapterMove(
+            ChapterPosition(
+              chapterIndex: index,
+              start: 0,
+              text: note.selectedText,
+              approximate: true,
+            ),
+            (chapterId, _, __) => _bookDao.moveNote(note.id, chapterId),
+          ),
+        );
+      }
+    }
+    for (final word in words) {
+      final index = oldIndexById[word.chapterId];
+      if (index == null) continue;
+      final start = word.positionStart;
+      moves.add(
+        _ChapterMove(
+          start == null
+              ? ChapterPosition(
+                  chapterIndex: index,
+                  start: 0,
+                  text: word.contextText,
+                  approximate: true,
+                )
+              : ChapterPosition(
+                  chapterIndex: index,
+                  start: start,
+                  end: word.positionEnd,
+                  text: word.term,
+                ),
+          (chapterId, moved, _) => start == null
+              ? _bookDao.moveVocabularyEntry(word.id, chapterId)
+              : _bookDao.moveVocabularyEntry(
+                  word.id,
+                  chapterId,
+                  positionStart: Value(moved.start),
+                  positionEnd: Value(moved.end),
+                ),
+        ),
+      );
+    }
+
+    final oldText = [
+      for (final chapter in oldChapters)
+        (title: chapter.title, content: contents[chapter.id] ?? ''),
+    ];
+    final newText = [
+      for (final chapter in parsedChapters)
+        (title: chapter.title, content: chapter.content),
+    ];
+    final moved = moves.isEmpty
+        ? const <ChapterPosition?>[]
+        : await _relocateInBackground(
+            oldText,
+            newText,
+            [for (final move in moves) move.position],
+          );
+
+    final freedChars = await _bookDao.cachedContentLength([bookId]);
+    await _bookDao.replaceBookContent(
+      bookId,
+      bookChanges,
+      chapterFactories,
+      afterInsert: (chapterIds) async {
+        for (var index = 0; index < moves.length; index++) {
+          final target = moved[index];
+          if (target == null || target.chapterIndex >= chapterIds.length) {
+            continue;
+          }
+          await moves[index].apply(
+            chapterIds[target.chapterIndex],
+            target,
+            newText[target.chapterIndex].content.length,
+          );
+        }
+      },
+    );
+    // 旧章节的正文删掉了，和删书一样要回收空间。
+    await _compactIfWorthIt(freedChars);
+  }
+
   List<ChaptersCompanion Function(int bookId)> _chapterFactories(
     _PreparedImport prepared,
-  ) {
-    return prepared.chapters
+  ) =>
+      _chapterFactoriesFor(prepared.chapters, format: prepared.format);
+
+  List<ChaptersCompanion Function(int bookId)> _chapterFactoriesFor(
+    List<ParsedChapter> chapters, {
+    required String format,
+  }) {
+    return chapters
         .map((chapter) => (int bookId) => ChaptersCompanion(
               bookId: Value(bookId),
               title: Value(chapter.title),
-              content: prepared.format == 'pdf'
+              content: format == 'pdf'
                   ? const Value.absent()
                   : Value(chapter.content),
               contentIndex: Value(chapter.sortOrder),
@@ -470,6 +700,23 @@ class BookService {
 
   /// 触发压缩的门槛：删掉的缓存正文字符数。
   static const _compactThresholdChars = 500000;
+}
+
+/// 在后台 isolate 里找位置：几百万字的书要搜一阵。写成顶层函数，闭包只
+/// 带这三个参数——在 [BookService] 的方法里直接写，闭包会连带捕获服务
+/// 本身，发不到别的 isolate。
+Future<List<ChapterPosition?>> _relocateInBackground(
+  List<RelocatableChapter> oldChapters,
+  List<RelocatableChapter> newChapters,
+  List<ChapterPosition> positions,
+) {
+  return Isolate.run(
+    () => relocateChapterPositions(
+      oldChapters: oldChapters,
+      newChapters: newChapters,
+      positions: positions,
+    ),
+  );
 }
 
 Future<String> _hashFile(String path) async {

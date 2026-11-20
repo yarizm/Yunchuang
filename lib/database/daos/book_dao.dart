@@ -357,11 +357,14 @@ class BookDao extends DatabaseAccessor<AppDatabase> with _$BookDaoMixin {
     });
   }
 
+  /// 换掉一本书的全部章节。删旧章节时外键会把阅读进度、笔记、生词的章节号
+  /// 置空；[afterInsert] 在同一个事务里拿到新章节的 id（按顺序），把它们挂回去。
   Future<void> replaceBookContent(
     int bookId,
     BooksCompanion bookChanges,
-    List<ChaptersCompanion Function(int bookId)> chapterFactories,
-  ) {
+    List<ChaptersCompanion Function(int bookId)> chapterFactories, {
+    Future<void> Function(List<int> chapterIds)? afterInsert,
+  }) {
     return transaction(() async {
       final updated = await (update(books)
             ..where((book) => book.id.equals(bookId)))
@@ -376,7 +379,81 @@ class BookDao extends DatabaseAccessor<AppDatabase> with _$BookDaoMixin {
       if (entries.isNotEmpty) {
         await batch((batch) => batch.insertAll(chapters, entries));
       }
+      if (afterInsert != null) {
+        final query = selectOnly(chapters)
+          ..addColumns([chapters.id])
+          ..where(chapters.bookId.equals(bookId))
+          ..orderBy([OrderingTerm.asc(chapters.sortOrder)]);
+        await afterInsert(
+          await query.map((row) => row.read(chapters.id)!).get(),
+        );
+      }
     });
+  }
+
+  /// 挂在本书某一章上的笔记、书签、高亮。换章节前读出来，换完再挂回去。
+  Future<List<Note>> notesOnChapters(int bookId) {
+    final notes = attachedDatabase.notes;
+    return (select(notes)
+          ..where((note) => note.bookId.equals(bookId) & note.chapterId.isNotNull()))
+        .get();
+  }
+
+  Future<List<VocabularyEntry>> vocabularyOnChapters(int bookId) {
+    final entries = attachedDatabase.vocabularyEntries;
+    return (select(entries)
+          ..where(
+            (entry) => entry.bookId.equals(bookId) & entry.chapterId.isNotNull(),
+          ))
+        .get();
+  }
+
+  Future<void> moveProgress(
+    int bookId,
+    int chapterId,
+    double positionInChapter,
+  ) {
+    return (update(readingProgress)
+          ..where((progress) => progress.bookId.equals(bookId)))
+        .write(
+      ReadingProgressCompanion(
+        chapterId: Value(chapterId),
+        positionInChapter: Value(positionInChapter),
+      ),
+    );
+  }
+
+  /// 只改位置，不动 updatedAt：这不是用户改了笔记。
+  Future<void> moveNote(
+    int noteId,
+    int chapterId, {
+    Value<int?> positionStart = const Value.absent(),
+    Value<int?> positionEnd = const Value.absent(),
+  }) {
+    final notes = attachedDatabase.notes;
+    return (update(notes)..where((note) => note.id.equals(noteId))).write(
+      NotesCompanion(
+        chapterId: Value(chapterId),
+        positionStart: positionStart,
+        positionEnd: positionEnd,
+      ),
+    );
+  }
+
+  Future<void> moveVocabularyEntry(
+    int entryId,
+    int chapterId, {
+    Value<int?> positionStart = const Value.absent(),
+    Value<int?> positionEnd = const Value.absent(),
+  }) {
+    final entries = attachedDatabase.vocabularyEntries;
+    return (update(entries)..where((entry) => entry.id.equals(entryId))).write(
+      VocabularyEntriesCompanion(
+        chapterId: Value(chapterId),
+        positionStart: positionStart,
+        positionEnd: positionEnd,
+      ),
+    );
   }
 
   Future<ReadingProgressData?> getProgress(int bookId) =>
