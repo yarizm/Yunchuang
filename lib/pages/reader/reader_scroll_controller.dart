@@ -32,6 +32,10 @@ class ReaderScrollController extends ScrollController {
   /// 估算落点要几帧才能收敛，正常两三帧。超过这个数就停在当前位置。
   static const _maxRestoreFrames = 24;
 
+  /// 跟读和跳到指定文字时，目标放在正文区往下这么多的地方，上面留几行
+  /// 上下文。
+  static const _focusFromTop = 0.2;
+
   final ValueNotifier<bool> _restoring = ValueNotifier(false);
   int _textLength = 0;
   int _leadingItemCount = 0;
@@ -41,6 +45,7 @@ class ReaderScrollController extends ScrollController {
   int _request = 0;
   int? _runningRequest;
   double? _pendingFraction;
+  int? _focusOffset;
   bool _reportScheduled = false;
   bool _disposed = false;
   ScrollPosition? _sliverOwner;
@@ -125,7 +130,10 @@ class ReaderScrollController extends ScrollController {
           estimate != null &&
           (estimate - viewTop).abs() <= position.viewportDimension * 2) {
         _queuedReveal ??= (start: start, end: end);
-        _animateReveal(position, estimate - _topInset - contentHeight * 0.2);
+        _animateReveal(
+          position,
+          estimate - _topInset - contentHeight * _focusFromTop,
+        );
       } else if (_textLength > 0) {
         jumpToFraction(start / _textLength);
       }
@@ -133,7 +141,7 @@ class ReaderScrollController extends ScrollController {
     }
     final bottom = _offsetOfChar(end) ?? top;
     if (top >= viewTop && bottom <= viewBottom - contentHeight * 0.15) return;
-    _animateReveal(position, top - _topInset - contentHeight * 0.2);
+    _animateReveal(position, top - _topInset - contentHeight * _focusFromTop);
   }
 
   bool _revealAnimating = false;
@@ -164,12 +172,19 @@ class ReaderScrollController extends ScrollController {
 
   /// 让字符比例 [fraction] 处那一行停在视口顶部（留白下面）。
   ///
+  /// 给了 [focusOffset] 时，落定之后再把这个字所在的行挪到正文区往下五分之
+  /// 一处，上面留几行上下文。搜索结果、AI 引用这类「带我去看这句」的跳转
+  /// 要给：段内的位置是按段落高度线性插值的，只按比例跳，目标那一行可能
+  /// 差出一行、正好落到视口上面，跳过去什么也看不到。恢复阅读进度不给，
+  /// 那要的就是原来顶部那一行。
+  ///
   /// 阅读器还没挂上时也可以调，挂上之后再跳。目标子项已经布局时直接跳；
   /// 否则先按已布局部分估算，逐帧收敛，期间 [restoring] 为 true。
-  void jumpToFraction(double fraction) {
+  void jumpToFraction(double fraction, {int? focusOffset}) {
     final target = fraction.clamp(0.0, 1.0).toDouble();
     _request++;
     _pendingFraction = null;
+    _focusOffset = focusOffset;
     // 跳转打断了跟读动画，排着的跟读位置作废，别等动画收尾时又滚回去。
     _queuedReveal = null;
     if (target <= 0) {
@@ -177,12 +192,14 @@ class ReaderScrollController extends ScrollController {
       _setRestoring(false);
       final position = _laidOutPosition;
       if (position != null) jumpTo(position.minScrollExtent);
+      _applyFocus();
       return;
     }
     final landing = _landingFor(target);
     if (landing != null && landing.exact) {
       _setRestoring(false);
       _jumpWithinBounds(landing.offset);
+      _applyFocus();
       return;
     }
     _pendingFraction = target;
@@ -194,6 +211,7 @@ class ReaderScrollController extends ScrollController {
   void cancelRestore() {
     _request++;
     _pendingFraction = null;
+    _focusOffset = null;
     _queuedReveal = null;
     _setRestoring(false);
   }
@@ -243,6 +261,8 @@ class ReaderScrollController extends ScrollController {
       if (!_disposed && request == _request) {
         _pendingFraction = null;
         _setRestoring(false);
+        // 和露出正文在同一帧，看不到先停在顶上、再挪下来的过程。
+        _applyFocus();
         if (settled) {
           _report();
         } else {
@@ -250,6 +270,17 @@ class ReaderScrollController extends ScrollController {
         }
       }
     }
+  }
+
+  void _applyFocus() {
+    final char = _focusOffset;
+    _focusOffset = null;
+    if (char == null) return;
+    final position = _laidOutPosition;
+    final top = _offsetOfChar(char);
+    if (position == null || top == null) return;
+    final contentHeight = position.viewportDimension - _topInset;
+    _jumpWithinBounds(top - _topInset - contentHeight * _focusFromTop);
   }
 
   void _jumpWithinBounds(double offset) {

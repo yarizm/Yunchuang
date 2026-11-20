@@ -360,16 +360,22 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
   }
 
   /// 把章内位置（字符比例）设为 [position]，滚动模式下让正文跳过去。
+  /// [focusOffset] 见 [ReaderScrollController.jumpToFraction]。
   ///
   /// 阅读器还没建出来时也可以调：控制器记下请求，列表挂上后再定位，定位
   /// 期间正文是藏着的。所以调用方不必等下一帧。
-  void _restoreChapterPosition(int chapterIndex, double position) {
+  void _restoreChapterPosition(
+    int chapterIndex,
+    double position, {
+    int? focusOffset,
+  }) {
     if (!mounted) return;
     _controller.setScrollPosition(position);
     if (_book?.format == 'pdf' || _controller.readingMode == ReadingMode.page) {
       return;
     }
-    _getScrollController(chapterIndex).jumpToFraction(position);
+    _getScrollController(chapterIndex)
+        .jumpToFraction(position, focusOffset: focusOffset);
   }
 
   void _cancelPositionRestore() {
@@ -615,7 +621,13 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
         ),
       );
     }
-    _goToChapter(chapterIndex, position: targetPosition);
+    // 找到了具体文字（搜索结果、AI 引用、笔记）就让那句露在正文区上部；
+    // 只有位置的（返回上一个阅读位置）照原样停在顶部那一行。
+    _goToChapter(
+      chapterIndex,
+      position: targetPosition,
+      focusOffset: resolution?.textOffsetStart,
+    );
     if (!mounted) return;
 
     _locatorHighlightTimer?.cancel();
@@ -1477,7 +1489,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
     }
   }
 
-  void _goToChapter(int index, {double? position}) {
+  void _goToChapter(int index, {double? position, int? focusOffset}) {
     if (index < 0 || index >= _chapters.length) return;
     _stopTtsForManualChapterNavigation();
     final targetPosition = position?.clamp(0.0, 1.0).toDouble();
@@ -1501,7 +1513,11 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
       _pdfReaderKey.currentState?.goToPage(_controller.currentChapterIndex);
     } else if (targetPosition != null) {
       if (_controller.readingMode == ReadingMode.scroll) {
-        _restoreChapterPosition(index, targetPosition);
+        _restoreChapterPosition(
+          index,
+          targetPosition,
+          focusOffset: focusOffset,
+        );
       } else {
         _scheduleProgressSave(const Duration(milliseconds: 200));
       }

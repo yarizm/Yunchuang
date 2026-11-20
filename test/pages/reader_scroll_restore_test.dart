@@ -445,6 +445,54 @@ void main() {
     expect(next.top, lessThan(800 * 0.5));
   });
 
+  testWidgets('jumping to a found passage shows its line with context above',
+      (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final paragraphs = [
+      for (var i = 0; i < 12; i++)
+        '段$i${List.filled(25, '他沿着河岸慢慢走着，看见远处的灯火一点点亮起来。').join()}'
+            .substring(0, 600),
+    ];
+    final text = paragraphs.join('\n');
+    final controller = ReaderScrollController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TxtReader(
+            content: text,
+            paragraphIndent: 0,
+            scrollController: controller,
+          ),
+        ),
+      ),
+    );
+
+    // 搜索结果、AI 引用：跳到第六段中间的一个字。段内位置按段落高度线性
+    // 插值，只按比例跳的话，这个字那一行会落在视口上面。
+    const inParagraph = 250;
+    const target = 5 * 601 + inParagraph;
+    controller.jumpToFraction(target / text.length, focusOffset: target);
+    await tester.pumpAndSettle();
+
+    final listFinder = find.byType(ListView);
+    final list = tester.widget<ListView>(listFinder);
+    final viewTop =
+        tester.getTopLeft(listFinder).dy + (list.padding! as EdgeInsets).top;
+    final editable = tester
+        .state<EditableTextState>(find.textContaining('段5').first)
+        .renderEditable;
+    final caret = editable
+        .getLocalRectForCaret(const TextPosition(offset: inParagraph));
+    final lineTop = editable.localToGlobal(caret.topLeft).dy;
+    // 那一行完整露出来，上面至少还留一行上下文，也不沉到屏幕下半截。
+    expect(lineTop, greaterThan(viewTop + caret.height));
+    expect(lineTop, lessThan(viewTop + (800 - viewTop) * 0.4));
+  });
+
   testWidgets('EPUB scroll reader restores the same paragraph', (tester) async {
     tester.view.physicalSize = const Size(400, 800);
     tester.view.devicePixelRatio = 1;

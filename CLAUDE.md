@@ -53,6 +53,7 @@ Database (SQLite via Drift ORM + FTS5 全文搜索)
 - `ReaderController`（`ChangeNotifier`，非 Riverpod provider）— 阅读器中心状态：当前章节索引、章内位置、阅读时长计时器、听书高亮（`TtsHighlight`）。`bookProgress` getter 综合章节索引与章内位置，供书架进度条与持久化百分比共用。
   - **性能设计**：章内位置额外通过 `scrollPositionListenable`（`ValueNotifier`）暴露，高频滚动更新走 ValueNotifier 而非 `notifyListeners()`，避免大范围重建。改动此处需同步检查 `test/pages/reader_performance_test.dart`。
 - **章内位置一律是字符比例**（读到的字 ÷ 本章正文长度），滚动、翻页、书签、定位、听书断点同一套坐标，切换阅读模式不跑偏。滚动模式由 `ReaderScrollController`（`reader_scroll_controller.dart`）换算：位置取视口顶部那一行的字，恢复时先把目标字所在的列表项布局出来、再按它的真实偏移跳过去，定位期间正文用 `HiddenWhileRestoring` 藏起来。**不要再用 `pixels / maxScrollExtent`**：`ListView.builder` 的 `maxScrollExtent` 是拿已布局项的平均高度外推的估计值，布局越往后它越变，按比例跳会一帧帧重跳——打开书时正文上下抽动、最后停的段落也不对，就是这个原因。见 `test/pages/reader_scroll_restore_test.dart`。
+  - 段内的位置是按段落高度**线性插值**的，存取用同一套算法所以不漂，但不精确到行：按比例跳过去，目标那一行可能差出一行、落到视口上面。所以跳到具体文字（搜索结果、AI 引用、笔记）时，`_applyLocator` 给 `jumpToFraction` 传 `focusOffset`，落定后把那一行挪到正文区往下五分之一处（和听书跟读一样）；恢复阅读进度、返回上一个位置只有位置，不传。
 - 正文底色统一由 `reader_highlights.dart` 叠层：听书段落、听书句子、定位目标，三种阅读器共用，颜色只在这里定。
 - `FormatReader` 抽象 + `ReadingMode` 枚举（`scroll` / `page`）— 两种阅读模式。`paged_reader.dart` 实现分页渲染与仿真书脊翻页，`paragraph_layout.dart` 负责段落排版计算。
 - 三个格式 Reader：`txt_reader`、`epub_reader`（flutter_html）、`pdf_reader`（SyncfusionPdfViewer，用 `GlobalKey<PdfReaderState>` 暴露跳页 API）。
