@@ -261,6 +261,192 @@ This is the second chapter.
       expect(chapters.last.title, '3 结束');
     });
 
+    test('does not split on score and ranking lines in a 第X章 book', () {
+      // 用户报告的书：网游竞技小说，正文里比分、名次以数字开头。
+      const text = '''
+第一百四十三章 玉米地的爱恋
+正文一。
+1：0，顺利斩杀这支叫做聚义轩的流派
+众人一阵欢呼。
+16强之后，估计就要强强碰撞了，这一场不好打。
+明月点了点头。
+
+第一百四十四章 水云谣
+正文二。
+1：0，先下一城！
+对面的人脸色一沉。
+
+第一百四十五章 血洗花间派
+正文三。''';
+
+      final chapters = TxtParser.parseChapters(text);
+      expect(chapters.map((chapter) => chapter.title), [
+        '第一百四十三章 玉米地的爱恋',
+        '第一百四十四章 水云谣',
+        '第一百四十五章 血洗花间派',
+      ]);
+      expect(chapters[0].content, contains('1：0，顺利斩杀'));
+      expect(chapters[0].content, contains('16强之后'));
+      expect(chapters[1].content, contains('1：0，先下一城！'));
+    });
+
+    test('keeps a long 第X章 book whole when many lines start with numbers', () {
+      // 之前裸数字行达到「第X章」的一成就整批当成标题。
+      final buffer = StringBuffer();
+      for (var number = 121; number <= 150; number++) {
+        buffer.writeln('第$number章 标题$number');
+        buffer.writeln('正文$number。');
+        if (number % 3 == 0) {
+          buffer.writeln('1：0，先下一城！');
+          buffer.writeln('对面的人脸色一沉。');
+          buffer.writeln('16强之后，估计就要强强碰撞了。');
+          buffer.writeln('明月点了点头。');
+          buffer.writeln('300金币就这么没了。');
+          buffer.writeln('他叹了口气。');
+        }
+        buffer.writeln();
+      }
+
+      final chapters = TxtParser.parseChapters(buffer.toString());
+      expect(chapters.length, 30);
+      expect(chapters.first.title, '第121章 标题121');
+      expect(chapters.last.title, '第150章 标题150');
+      expect(chapters[2].content, contains('300金币就这么没了。'));
+    });
+
+    test('accepts bare numbers that continue large chinese chapter numbers', () {
+      const text = '''
+第一百零九章 甲
+正文甲。
+
+110 乙
+正文乙。
+
+第一百一十一章 丙
+正文丙。
+
+第两百章 丁
+正文丁。
+
+201、戊
+正文戊。
+
+第二〇二章 己
+正文己。''';
+
+      final chapters = TxtParser.parseChapters(text);
+      expect(chapters.map((chapter) => chapter.title), [
+        '第一百零九章 甲',
+        '110 乙',
+        '第一百一十一章 丙',
+        '第两百章 丁',
+        '201、戊',
+        '第二〇二章 己',
+      ]);
+    });
+
+    test('ignores score and ranking lines in a bare-number book', () {
+      const text = '''
+1 开始
+正文一。
+1：0，先下一城！
+对面的人脸色一沉。
+16强之后，估计就要强强碰撞了。
+明月点了点头。
+
+2 继续
+正文二。
+300金币就这么没了。
+他叹了口气。
+
+3 结束
+正文三。''';
+
+      final chapters = TxtParser.parseChapters(text);
+      expect(chapters.map((chapter) => chapter.title), [
+        '1 开始',
+        '2 继续',
+        '3 结束',
+      ]);
+      expect(chapters[0].content, contains('16强之后'));
+      expect(chapters[1].content, contains('300金币'));
+    });
+
+    test('puts bare-number headings on the body, not the table of contents',
+        () {
+      const text = '''
+目录
+1 开始
+2 继续
+3 结束
+
+1 开始
+正文一。
+
+2 继续
+正文二。
+
+3 结束
+正文三。''';
+
+      final chapters = TxtParser.parseChapters(text);
+      expect(chapters.map((chapter) => chapter.title), [
+        '1 开始',
+        '2 继续',
+        '3 结束',
+      ]);
+      expect(chapters.map((chapter) => chapter.content), [
+        '正文一。',
+        '正文二。',
+        '正文三。',
+      ]);
+    });
+
+    test('lets bare-number headings restart after a volume heading', () {
+      const text = '''
+第一卷 春
+1 开始
+正文一。
+
+2 继续
+正文二。
+
+第二卷 秋
+1 重逢
+正文三。
+
+2 别离
+正文四。''';
+
+      final chapters = TxtParser.parseChapters(text);
+      expect(chapters.map((chapter) => chapter.title), [
+        '1 开始',
+        '2 继续',
+        '1 重逢',
+        '2 别离',
+      ]);
+    });
+
+    test('keeps a bare-number book whose prose mentions 第X章', () {
+      // 作者的话里提了两次「第X章」，这本书的标题仍然是数字。
+      final body = '他沿着河岸往前走。' * 140;
+      final buffer = StringBuffer();
+      for (var number = 1; number <= 6; number++) {
+        buffer.writeln('$number 标题$number');
+        buffer.writeln(body);
+        if (number == 2) buffer.writeln('第三章 我改了一个错字');
+        if (number == 4) buffer.writeln('第五章 也改了');
+        buffer.writeln();
+      }
+
+      final chapters = TxtParser.parseChapters(buffer.toString());
+      expect(
+        chapters.map((chapter) => chapter.title),
+        [for (var number = 1; number <= 6; number++) '$number 标题$number'],
+      );
+      expect(chapters[1].content, contains('第三章 我改了一个错字'));
+    });
+
     test('keeps special headings alongside chapters', () {
       const text = '''
 序章

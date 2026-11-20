@@ -52,7 +52,7 @@ class TxtParser {
   );
   static final RegExp _arabicNumberHeadingPattern = RegExp(
     r'^([0-9０-９]{1,5}(?:\.[0-9０-９]{1,2})?)'
-    r'(?:\s*$|(?:[.．、:：]\s*|\s+)?(\S.{0,49})?)$',
+    r'(?:\s*$|([.．、:：]\s*|\s+)?(\S.{0,49})?)$',
   );
   static final RegExp _chineseNumberHeadingPattern = RegExp(
     r'^([零〇一二两三四五六七八九十百千万]{1,12})'
@@ -295,6 +295,7 @@ class TxtParser {
               start: match.start + _leadingWhitespaceLength(match.group(0)!),
               kind: _kindForMarker(explicit.group(2)!),
               strong: strong,
+              number: _parseNumber(explicit.group(1)!),
             ),
           );
         }
@@ -316,6 +317,7 @@ class TxtParser {
                     embedded.start,
                 kind: _kindForMarker(embedded.group(2)!),
                 strong: embeddedStrong,
+                number: _parseNumber(embedded.group(1)!),
               ),
             );
           }
@@ -323,12 +325,15 @@ class TxtParser {
         continue;
       }
 
-      if (line.length <= 80 && _englishHeadingPattern.hasMatch(line)) {
+      final english =
+          line.length <= 80 ? _englishHeadingPattern.firstMatch(line) : null;
+      if (english != null) {
         candidates.add(
           _HeadingCandidate(
             start: match.start + _leadingWhitespaceLength(match.group(0)!),
             kind: _HeadingKind.chapter,
             strong: true,
+            number: int.tryParse(english.group(1)!),
           ),
         );
         continue;
@@ -356,15 +361,14 @@ class TxtParser {
         continue;
       }
 
-      final numeric = line.length <= 80
-          ? _arabicNumberHeadingPattern.firstMatch(line)
-          : null;
-      if ((numeric != null && _looksLikeNumericHeading(numeric.group(2))) ||
-          (line.length <= 80 && _chineseNumberHeadingPattern.hasMatch(line))) {
+      final numeric = _numericHeading(line);
+      if (numeric != null) {
         candidates.add(
           _HeadingCandidate(
             start: match.start + _leadingWhitespaceLength(match.group(0)!),
             kind: _HeadingKind.numeric,
+            strong: numeric.clean,
+            number: numeric.number,
           ),
         );
         continue;
@@ -392,11 +396,112 @@ class TxtParser {
             strong: _strongExplicitHeadingPattern.hasMatch(
               line.substring(embedded.start),
             ),
+            number: _parseNumber(embedded.group(1)!),
           ),
         );
       }
     }
     return candidates;
+  }
+
+  /// 以裸数字开头的标题行：「12」「12、重逢」「12 重逢」「十二、重逢」，
+  /// 还有数字后面直接接字的「12重逢」。不是标题时返回 null。
+  ///
+  /// clean 表示写法干净：只有一个数字，或者是数字、分隔符再加一个短标题，
+  /// 而且标题里没有逗号、句号这类句子标点。正文里以数字开头的行大多不干净，
+  /// 比如「16强之后，估计……」。冒号后面跟数字的是比分或时间（「1：0」
+  /// 「3:30」），不算标题。
+  static ({int number, bool clean})? _numericHeading(String line) {
+    if (line.length > 80) return null;
+    final arabic = _arabicNumberHeadingPattern.firstMatch(line);
+    if (arabic != null) {
+      final title = arabic.group(3);
+      if (!_looksLikeNumericHeading(title)) return null;
+      if (title != null && title.startsWith(RegExp('[0-9０-９]'))) return null;
+      // 「1.2 标题」这种小节编号按整数部分算。
+      final number = _parseNumber(arabic.group(1)!.split('.').first);
+      if (number == null) return null;
+      return (
+        number: number,
+        clean: title == null ||
+            (arabic.group(2) != null && !_looksLikeNumberedProse(title)),
+      );
+    }
+    final chinese = _chineseNumberHeadingPattern.firstMatch(line);
+    if (chinese == null) return null;
+    final number = _parseNumber(chinese.group(1)!);
+    if (number == null) return null;
+    final title = chinese.group(2);
+    return (
+      number: number,
+      clean: title == null || !_looksLikeNumberedProse(title),
+    );
+  }
+
+  static bool _looksLikeNumberedProse(String title) =>
+      title.contains(RegExp('[，,]')) ||
+      _looksLikeProseTitledLine(title, strong: true);
+
+  static const Map<String, int> _chineseDigits = {
+    '零': 0,
+    '〇': 0,
+    '一': 1,
+    '二': 2,
+    '两': 2,
+    '三': 3,
+    '四': 4,
+    '五': 5,
+    '六': 6,
+    '七': 7,
+    '八': 8,
+    '九': 9,
+  };
+  static final RegExp _chineseNumeral = RegExp(r'^[零〇一二两三四五六七八九十百千万亿]+$');
+  static final RegExp _chineseUnit = RegExp('[十百千万亿]');
+
+  /// 标题里的编号换成整数：阿拉伯数字（含全角）、「一百零三」、「一〇三」。
+  /// 认不出的（「甲」「乙」、汉字和阿拉伯数字混写）返回 null。
+  static int? _parseNumber(String text) {
+    final value = text.replaceAllMapped(
+      RegExp('[０-９]'),
+      (match) => String.fromCharCode(match[0]!.codeUnitAt(0) - 0xFF10 + 0x30),
+    );
+    if (RegExp(r'^[0-9]+$').hasMatch(value)) return int.tryParse(value);
+    if (!_chineseNumeral.hasMatch(value)) return null;
+    if (!_chineseUnit.hasMatch(value)) {
+      // 「一〇三」：逐位读。
+      var result = 0;
+      for (final char in value.split('')) {
+        result = result * 10 + _chineseDigits[char]!;
+      }
+      return result;
+    }
+    var total = 0; // 万、亿以上的部分
+    var section = 0; // 万以下的部分
+    var digit = 0;
+    for (final char in value.split('')) {
+      final parsed = _chineseDigits[char];
+      if (parsed != null) {
+        digit = parsed;
+        continue;
+      }
+      switch (char) {
+        case '十':
+          section += (digit == 0 ? 1 : digit) * 10;
+        case '百':
+          section += (digit == 0 ? 1 : digit) * 100;
+        case '千':
+          section += (digit == 0 ? 1 : digit) * 1000;
+        case '万':
+          total += (section + digit) * 10000;
+          section = 0;
+        case '亿':
+          total = (total + section + digit) * 100000000;
+          section = 0;
+      }
+      digit = 0;
+    }
+    return total + section + digit;
   }
 
   static RegExpMatch? _findEmbeddedHeading(String line, int after) {
@@ -495,90 +600,209 @@ class TxtParser {
     }
   }
 
+  /// 一本书只认一种主要的标题写法，另一种写法的标题必须接得上它的编号。
+  ///
+  /// 做法参考开源阅读（Legado）：它给每本书只挑一条目录规则，挑「像章节」的
+  /// 命中最多的那条，从不把几种写法混在一起用。之前这里只要裸数字行够多
+  /// （达到「第X章」的一成）就整批收进来，网游、竞技小说里「1：0，先下一城！」
+  /// 「16强之后，……」这样的正文行于是成了一个个假章节。
   static List<_HeadingCandidate> _selectHeadings(
     List<_HeadingCandidate> candidates,
   ) {
-    final chapterCount =
-        candidates.where((item) => item.kind == _HeadingKind.chapter).length;
-    final sectionCount =
-        candidates.where((item) => item.kind == _HeadingKind.section).length;
-    final numericCount =
-        candidates.where((item) => item.kind == _HeadingKind.numeric).length;
-    final strongChapterCount = candidates
-        .where(
-          (item) => item.kind == _HeadingKind.chapter && item.strong,
-        )
-        .length;
-    final strongSectionCount = candidates
-        .where(
-          (item) => item.kind == _HeadingKind.section && item.strong,
-        )
-        .length;
-    final extraCount =
-        candidates.where((item) => item.kind == _HeadingKind.extra).length;
+    List<_HeadingCandidate> ofKind(_HeadingKind kind, {bool strong = false}) =>
+        [
+          for (final item in candidates)
+            if (item.kind == kind && (!strong || item.strong)) item,
+        ];
 
-    Set<_HeadingKind> selectedKinds;
-    _HeadingKind? strongOnlyKind;
-    if (strongChapterCount >= 2) {
-      selectedKinds = {
-        _HeadingKind.chapter,
-        if (_shouldIncludeNumeric(chapterCount, numericCount))
-          _HeadingKind.numeric,
-      };
-      // 本书的章节标题已经由强标题（「第一章 开始」）确立，那些没有分隔符
-      // 的弱匹配多半是正文在提「第三章」。混进来会把一章劈成两半，还会
-      // 造出只有标题、没有正文的空章。
-      strongOnlyKind = _HeadingKind.chapter;
-    } else if (strongSectionCount >= 2) {
-      selectedKinds = {_HeadingKind.section};
-      strongOnlyKind = _HeadingKind.section;
-    } else if (chapterCount >= 2) {
-      selectedKinds = {
-        _HeadingKind.chapter,
-        if (_shouldIncludeNumeric(chapterCount, numericCount))
-          _HeadingKind.numeric,
-      };
-    } else if (sectionCount >= 2) {
-      selectedKinds = {
-        _HeadingKind.section,
-        if (_shouldIncludeNumeric(sectionCount, numericCount))
-          _HeadingKind.numeric,
-      };
-    } else if (numericCount >= 2) {
-      selectedKinds = {
-        _HeadingKind.numeric,
-        if (chapterCount == 1) _HeadingKind.chapter,
-        if (sectionCount == 1) _HeadingKind.section,
-      };
-    } else if (chapterCount + sectionCount + numericCount >= 2) {
-      selectedKinds = {
-        _HeadingKind.chapter,
-        _HeadingKind.section,
-        _HeadingKind.numeric,
-      };
-    } else if (extraCount >= 2) {
-      // 单独下载的番外合集：没有正章，只有「番外一」「番外二」……
-      selectedKinds = const {};
-    } else {
-      return const [];
+    final chapters = ofKind(_HeadingKind.chapter);
+    final sections = ofKind(_HeadingKind.section);
+    final numerics = ofKind(_HeadingKind.numeric);
+    final strongChapters = ofKind(_HeadingKind.chapter, strong: true);
+    final strongSections = ofKind(_HeadingKind.section, strong: true);
+    // 序章、尾声、番外这些不论本书用哪种标题都收。
+    final keywords = [
+      for (final item in candidates)
+        if (item.kind == _HeadingKind.special ||
+            item.kind == _HeadingKind.extra)
+          item,
+    ];
+    final volumeStarts = [
+      for (final item in ofKind(_HeadingKind.volume)) item.start,
+    ];
+
+    // 带「第」「章」的标题定下的结构。有强标题（「第一章 开始」）时，没有
+    // 分隔符的弱匹配多半是正文在提「第三章」，混进来会把一章劈成两半，
+    // 还会造出只有标题、没有正文的空章。
+    final marked = strongChapters.length >= 2
+        ? strongChapters
+        : strongSections.length >= 2
+            ? strongSections
+            : chapters.length >= 2
+                ? chapters
+                : sections.length >= 2
+                    ? sections
+                    : null;
+    final numberChain = _numberChain(numerics, volumeStarts);
+
+    // 干净的数字标题接成的一串比「第X章」还多，说明数字才是本书的标题，
+    // 那几处「第X章」是正文或作者的话。
+    if (marked != null &&
+        _chapterLikeCount(marked) >=
+            _chapterLikeCount([
+              for (final item in numberChain)
+                if (item.strong) item,
+            ])) {
+      return _byStart([
+        ...marked,
+        ..._continuingNumbers(marked, numerics),
+        ...keywords,
+      ]);
     }
 
-    return candidates
-        .where(
-          (candidate) =>
-              (selectedKinds.contains(candidate.kind) &&
-                  (candidate.kind != strongOnlyKind || candidate.strong)) ||
-              candidate.kind == _HeadingKind.special ||
-              candidate.kind == _HeadingKind.extra,
-        )
-        .toList()
-      ..sort((a, b) => a.start.compareTo(b.start));
+    if (numberChain.length >= 2) {
+      final inChain = numberChain.toSet();
+      return _byStart([
+        ...numberChain,
+        ..._continuingNumbers(
+          numberChain,
+          _byStart([
+            ...chapters,
+            ...sections,
+            for (final item in numerics)
+              if (!inChain.contains(item)) item,
+          ]),
+        ),
+        ...keywords,
+      ]);
+    }
+
+    // 零星的一两个标题：一章一节，或者「第一章」后面跟着接得上的「2」。
+    final loose = _byStart([...chapters, ...sections]);
+    final headings = _byStart([
+      ...loose,
+      ..._continuingNumbers(loose, numerics),
+    ]);
+    if (headings.length >= 2) {
+      return _byStart([...headings, ...keywords]);
+    }
+    // 单独下载的番外合集：没有正章，只有「番外一」「番外二」……
+    if (ofKind(_HeadingKind.extra).length >= 2) return keywords;
+    return const [];
   }
 
-  static bool _shouldIncludeNumeric(int mainCount, int numericCount) {
-    if (numericCount == 0) return false;
-    return mainCount <= 20 || numericCount * 10 >= mainCount;
+  /// 「像章节」的命中数：和上一个计入的标题隔开超过 [_minChapterGap] 个字
+  /// 才算一次。章节之间总隔着正文，正文里成串的编号（列表、比分）挤在一起，
+  /// 算不了几次。计法同开源阅读挑目录规则时的计数。
+  static int _chapterLikeCount(List<_HeadingCandidate> headings) {
+    var count = 0;
+    int? last;
+    for (final heading in headings) {
+      if (last == null || heading.start - last > _minChapterGap) {
+        count++;
+        last = heading.start;
+      }
+    }
+    return count;
   }
+
+  static const int _minChapterGap = 1000;
+
+  /// 相邻两个数字标题的编号最多差这么多：作者漏编、抓取时缺了几章，编号
+  /// 会跳；正文里的数字乱跳，接不进来。
+  static const int _maxNumberStep = 20;
+
+  /// 编号接得上的最长一串数字标题：后一个比前一个大 1～[_maxNumberStep]，
+  /// 隔着分卷标题（「第二卷」）时也可以从 1 重新编。
+  ///
+  /// 一样长的串里，取干净的标题多的；还一样，取后出现的：卷首目录里的
+  /// 「1 开始」「2 继续」和正文里的那一串一样长，标题要落在正文上。
+  static List<_HeadingCandidate> _numberChain(
+    List<_HeadingCandidate> items,
+    List<int> volumeStarts,
+  ) {
+    final length = List<int>.filled(items.length, 0);
+    final clean = List<int>.filled(items.length, 0);
+    final previous = List<int>.filled(items.length, -1);
+    int compare(int a, int b) =>
+        length[a] != length[b] ? length[a] - length[b] : clean[a] - clean[b];
+
+    // 以某个编号结尾的最好的一串，最后一项的下标。
+    final endingWith = <int, int>{};
+    var best = -1;
+    // 最近那个分卷标题之前最好的一串：卷里的编号可以接着它从 1 重新开始。
+    var beforeVolume = -1;
+    var volume = 0;
+    for (var index = 0; index < items.length; index++) {
+      final item = items[index];
+      while (volume < volumeStarts.length &&
+          volumeStarts[volume] < item.start) {
+        beforeVolume = best;
+        volume++;
+      }
+      final number = item.number;
+      if (number == null) continue;
+
+      var from = -1;
+      for (var step = 1; step <= _maxNumberStep; step++) {
+        final candidate = endingWith[number - step];
+        if (candidate != null && (from < 0 || compare(candidate, from) > 0)) {
+          from = candidate;
+        }
+      }
+      if (number <= 1 &&
+          beforeVolume >= 0 &&
+          (from < 0 || compare(beforeVolume, from) > 0)) {
+        from = beforeVolume;
+      }
+      length[index] = from < 0 ? 1 : length[from] + 1;
+      clean[index] = (from < 0 ? 0 : clean[from]) + (item.strong ? 1 : 0);
+      previous[index] = from;
+
+      final existing = endingWith[number];
+      if (existing == null || compare(index, existing) >= 0) {
+        endingWith[number] = index;
+      }
+      if (best < 0 || compare(index, best) >= 0) best = index;
+    }
+
+    final chain = <_HeadingCandidate>[];
+    for (var index = best; index >= 0; index = previous[index]) {
+      chain.add(items[index]);
+    }
+    return chain.reversed.toList(growable: false);
+  }
+
+  /// [fillers] 里编号接得上 [anchors] 的标题：前一个标题是 N，它就得是
+  /// N+1，而且小于下一个锚点的编号。「第一话 → 2 → 3 → 第四话」这种
+  /// 漏写了「第」「话」的标题收进来；正文里的「1：0」「16强之后」夹在
+  /// 第 143 章和第 144 章之间，接不上，不收。
+  static List<_HeadingCandidate> _continuingNumbers(
+    List<_HeadingCandidate> anchors,
+    List<_HeadingCandidate> fillers,
+  ) {
+    final accepted = <_HeadingCandidate>[];
+    var next = 0;
+    int? previous = 0;
+    for (final filler in fillers) {
+      while (next < anchors.length && anchors[next].start < filler.start) {
+        previous = anchors[next].number;
+        next++;
+      }
+      final number = filler.number;
+      if (number == null || previous == null || number != previous + 1) {
+        continue;
+      }
+      final limit = next < anchors.length ? anchors[next].number : null;
+      if (limit != null && number >= limit) continue;
+      accepted.add(filler);
+      previous = number;
+    }
+    return accepted;
+  }
+
+  static List<_HeadingCandidate> _byStart(List<_HeadingCandidate> headings) =>
+      headings..sort((a, b) => a.start.compareTo(b.start));
 
   static ParsedChapter _fallbackChapter(String text) {
     final trimmed = text.trim();
@@ -613,11 +837,19 @@ enum _HeadingKind {
 class _HeadingCandidate {
   final int start;
   final _HeadingKind kind;
+
+  /// 章、节：带「第」和分隔符（「第一章 开始」）。数字标题：写法干净
+  /// （「12」「12、重逢」），见 [TxtParser._numericHeading]。
   final bool strong;
+
+  /// 标题里的编号，「第一百四十三章」是 143。序章、番外这类没有编号，
+  /// 编号认不出来（「第甲章」）也是 null。
+  final int? number;
 
   const _HeadingCandidate({
     required this.start,
     required this.kind,
     this.strong = false,
+    this.number,
   });
 }
