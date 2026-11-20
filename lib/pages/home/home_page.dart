@@ -818,7 +818,9 @@ class HomePage extends ConsumerWidget {
                   child: CircularProgressIndicator(strokeWidth: 2.5),
                 ),
                 SizedBox(width: 16),
-                Expanded(child: Text('正在重新分章…')),
+                // 删旧章节、写新章节都要同步全文索引，几百万字的书在手机上
+                // 要几十秒，说一声免得以为卡住了。
+                Expanded(child: Text('正在重新分章…\n几百万字的书要等几十秒。')),
               ],
             ),
           ),

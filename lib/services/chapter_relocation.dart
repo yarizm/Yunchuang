@@ -192,24 +192,81 @@ const _minAnchorLength = 4;
 class _JoinedChapters {
   _JoinedChapters(this._chapters) {
     final buffer = StringBuffer();
-    for (final chapter in _chapters) {
+    for (var index = 0; index < _chapters.length; index++) {
+      final chapter = _chapters[index];
       _starts.add(buffer.length);
       buffer
         ..write(chapter.content)
         ..write('\u0000');
+      (_byTitle[chapter.title] ??= []).add(index);
     }
     _text = buffer.toString();
   }
 
   final List<RelocatableChapter> _chapters;
   final List<int> _starts = [];
+  final Map<String, List<int>> _byTitle = {};
   late final String _text;
 
   /// 同一段原文最多看这么多处：一行「……」这种到处都有的原文不值得
   /// 全部比一遍。
   static const _maxHits = 200;
 
+  /// 先在估计序号前后这么多章里找，找不到再扫全书。
+  static const _window = 60;
+
+  /// 找 [anchor]：同名的章优先，其次离 [expectedIndex] 近的章，同一章里
+  /// 取离 [expectedOffset] 近的那处。
+  ///
+  /// 先在附近逐章找：同名的那几章、估计序号前后 [_window] 章。这样挑出来的
+  /// 和扫全书一样（全书的优先级也是先同名、再看离得多远），只是绝大多数
+  /// 位置不用扫全书——几百万字的书扫一遍要几十毫秒，一本书挂着几百条笔记
+  /// 时，之前光找位置就要十几秒。
   ({int index, int offset})? find(
+    String anchor, {
+    required String preferTitle,
+    required int expectedIndex,
+    required int expectedOffset,
+  }) {
+    final sameTitle = [...?_byTitle[preferTitle]]..sort(
+        (a, b) => (a - expectedIndex).abs() - (b - expectedIndex).abs(),
+      );
+    for (final index in sameTitle) {
+      final offset = _nearestIn(index, anchor, expectedOffset);
+      if (offset != null) return (index: index, offset: offset);
+    }
+    for (var distance = 0; distance <= _window; distance++) {
+      for (final index in {expectedIndex - distance, expectedIndex + distance}) {
+        if (index < 0 || index >= _chapters.length) continue;
+        final offset = _nearestIn(index, anchor, expectedOffset);
+        if (offset != null) return (index: index, offset: offset);
+      }
+    }
+    return _scanAll(
+      anchor,
+      preferTitle: preferTitle,
+      expectedIndex: expectedIndex,
+      expectedOffset: expectedOffset,
+    );
+  }
+
+  /// 第 [index] 章里离 [expectedOffset] 最近的那处 [anchor]。
+  int? _nearestIn(int index, String anchor, int expectedOffset) {
+    final content = _chapters[index].content;
+    int? best;
+    var hits = 0;
+    for (var at = content.indexOf(anchor);
+        at >= 0 && hits < _maxHits;
+        at = content.indexOf(anchor, at + 1), hits++) {
+      if (best == null ||
+          (at - expectedOffset).abs() < (best - expectedOffset).abs()) {
+        best = at;
+      }
+    }
+    return best;
+  }
+
+  ({int index, int offset})? _scanAll(
     String anchor, {
     required String preferTitle,
     required int expectedIndex,
