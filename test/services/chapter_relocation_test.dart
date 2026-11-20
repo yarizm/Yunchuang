@@ -112,6 +112,64 @@ void main() {
     expect(moved.start, 2);
   });
 
+  test('finds the right copy when a merged chapter repeats earlier text', () {
+    // 网文里「叮！系统提示……」这类句子一章出现好几次。假章节并回真章节
+    // 以后，同一段原文前面还有一份，不能落到前面那份上。
+    const line = '擂台上的灯光晃得人睁不开眼，他握紧了手里的长剑，心里却出奇地平静。';
+    final realBody = [for (var k = 1; k <= 3; k++) '第123章第$k段，$line'].join('\n');
+    final fakeBody =
+        [for (var k = 1; k <= 3; k++) '十六强之后第123章第$k段，$line'].join('\n');
+    final old = [
+      (title: '第一百二十三章 第123场', content: realBody),
+      (title: '16强之后，估计就要强强碰撞了。', content: fakeBody),
+      (title: '第一百二十四章 第124场', content: '第124章的正文，和前面都不一样。'),
+    ];
+    final merged = '$realBody\n16强之后，估计就要强强碰撞了。\n$fakeBody';
+    final fresh = [
+      (title: '第一百二十三章 第123场', content: merged),
+      old[2],
+    ];
+    final at = fakeBody.indexOf('23章第2段');
+
+    final moved = relocateChapterPositions(
+      oldChapters: old,
+      newChapters: fresh,
+      positions: [ChapterPosition(chapterIndex: 1, start: at, approximate: true)],
+    ).single!;
+
+    expect(moved.chapterIndex, 0);
+    expect(
+      moved.start,
+      merged.indexOf('十六强之后第123章第2段') + '十六强之后第1'.length,
+    );
+  });
+
+  test('finds a position when the new rules split an old chapter', () {
+    const first = '第一话的正文，主角走进了城门。';
+    const second = '第二段的正文，守卫拦住了他的去路。';
+    final old = [
+      (title: '第一话 开始', content: '$first\n2 第二段\n$second'),
+      (title: '第三话 结束', content: '第三话的正文。'),
+    ];
+    final fresh = [
+      (title: '第一话 开始', content: first),
+      (title: '2 第二段', content: second),
+      (title: '第三话 结束', content: '第三话的正文。'),
+    ];
+    final at = old[0].content.indexOf('守卫');
+
+    final moved = relocateChapterPositions(
+      oldChapters: old,
+      newChapters: fresh,
+      positions: [
+        ChapterPosition(chapterIndex: 0, start: at, end: at + 2, text: '守卫'),
+      ],
+    ).single!;
+
+    expect(moved.chapterIndex, 1);
+    expect(second.substring(moved.start, moved.end), '守卫');
+  });
+
   test('keeps positions as they are when the chapters did not change', () {
     // PDF 的页：正文不缓存，章节就是页，换了文件也一样。
     final pages = [

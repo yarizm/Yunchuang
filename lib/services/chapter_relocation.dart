@@ -81,30 +81,49 @@ ChapterPosition? _relocate(
           .round()
           .clamp(0, newChapters.length - 1);
 
-  // 先用长一点的原文找；旧位置附近正好跨过一个新的章节标题时，长的那段
-  // 在哪一章里都找不到，再用短的试一次。
-  for (final length in const [32, 12]) {
-    final anchor = _anchorFor(position, old.content, length);
-    if (anchor == null) continue;
+  ChapterPosition moved(int index, int start) {
+    final contentLength = newChapters[index].content.length;
+    final clamped = start.clamp(0, contentLength);
+    final end = position.end;
+    return ChapterPosition(
+      chapterIndex: index,
+      start: clamped,
+      end: end == null
+          ? null
+          : (clamped + end - position.start).clamp(clamped, contentLength),
+      text: position.text,
+      approximate: position.approximate,
+    );
+  }
+
+  // 先整章找。旧规则多切出来的章节，正文原封不动地并进了新的某一章，
+  // 找到整段就知道它从哪儿开始，偏移直接加上去。只拿位置附近一小段原文
+  // 去找会认错：「叮！系统提示……」这种句子一章里出现好几次，假章节并回去
+  // 以后，前面往往还有一模一样的一段。
+  final start = position.start;
+  if (old.content.trim().length >= _minAnchorLength &&
+      start >= 0 &&
+      start <= old.content.length) {
+    final hit = joined.find(
+      old.content,
+      preferTitle: old.title,
+      expectedIndex: expected,
+      expectedOffset: 0,
+    );
+    if (hit != null) return moved(hit.index, hit.offset + start);
+  }
+
+  // 整段找不到，是新规则把这一章切开了（或者正文变了）。改用位置附近的
+  // 一小段原文找：旧位置附近可能正好夹着一个新的章节标题，跨过它的那段
+  // 在哪一章里都没有，所以前后都取、只取后面、只取前面轮着试。
+  for (final anchor in _anchorsFor(position, old.content)) {
     final hit = joined.find(
       anchor.text,
       preferTitle: old.title,
       expectedIndex: expected,
       expectedOffset: anchor.start,
     );
-    if (hit == null) continue;
-    final contentLength = newChapters[hit.index].content.length;
-    final start = (hit.offset + anchor.delta).clamp(0, contentLength);
-    final end = position.end;
-    return ChapterPosition(
-      chapterIndex: hit.index,
-      start: start,
-      end: end == null
-          ? null
-          : (start + end - position.start).clamp(start, contentLength),
-      text: position.text,
-      approximate: position.approximate,
-    );
+    if (hit != null) return moved(hit.index, hit.offset + anchor.delta);
   }
 
   if (!position.approximate) return null;
@@ -126,14 +145,14 @@ ChapterPosition? _relocate(
   );
 }
 
-/// 拿来搜的那段原文：从旧位置往后取 [length] 个字，快到章末时往前补够。
-/// [delta] 是旧位置在这段文字里的偏移。旧正文缺了，或者和笔记记下的原文
-/// 对不上，就用笔记的原文本身。
-({String text, int start, int delta})? _anchorFor(
+/// 拿来搜的几段原文，按先后试：旧位置前后各取 32 个字、只取后面 32 个、
+/// 只取前面 32 个，再换 12 个字各来一遍（到了章首章尾就少取）。[delta]
+/// 是旧位置在这段文字里的偏移。旧正文缺了，或者和笔记记下的原文对不上，
+/// 就只用笔记的原文本身。
+Iterable<({String text, int start, int delta})> _anchorsFor(
   ChapterPosition position,
   String content,
-  int length,
-) {
+) sync* {
   final start = position.start;
   final text = position.text;
   final inContent = start >= 0 && start <= content.length;
@@ -143,17 +162,26 @@ ChapterPosition? _relocate(
           start + text.length <= content.length &&
           content.startsWith(text, start));
   if (content.isNotEmpty && inContent && textMatches) {
-    final to = math.min(content.length, start + length);
-    final from = math.max(0, to - length);
-    final anchor = content.substring(from, to);
-    if (anchor.trim().length >= _minAnchorLength) {
-      return (text: anchor, start: from, delta: start - from);
+    final seen = <String>{};
+    for (final radius in const [32, 12]) {
+      for (final (before, after) in [
+        (radius, radius),
+        (0, radius),
+        (radius, 0),
+      ]) {
+        final from = math.max(0, start - before);
+        final to = math.min(content.length, start + after);
+        final anchor = content.substring(from, to);
+        if (anchor.trim().length >= _minAnchorLength && seen.add(anchor)) {
+          yield (text: anchor, start: from, delta: start - from);
+        }
+      }
     }
+    return;
   }
   if (text != null && text.trim().length >= _minAnchorLength) {
-    return (text: text, start: start, delta: 0);
+    yield (text: text, start: start, delta: 0);
   }
-  return null;
 }
 
 /// 太短的原文到处都是，搜到了也说明不了什么。
